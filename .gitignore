@@ -1,0 +1,37 @@
+# Credentials and sensitive data
+*.key
+*.pem
+secrets.h
+credentials.h
+config.h
+
+# Arduino build files
+build/
+*.elf
+*.bin
+*.hex
+
+# ESP32 specific
+sdkconfig
+sdkconfig.old
+
+# IDE files
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.pio/
+.platformio/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+
+# OS files
+Thumbs.db
