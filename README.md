@@ -51,12 +51,29 @@ On first boot or when config is missing:
 3. Navigate to `192.168.4.1` in your browser
 4. Enter:
    - **WiFi SSID:** Your WiFi network name
-   - **WiFi Password:** Your WiFi password
+   - **WiFi Password:** Your WiFi password (encrypted before storage)
    - **ThingsBoard MQTT Host:** e.g., `mqtt.thingsboard.cloud`
-   - **Device Access Token:** Your gateway device token from ThingsBoard
+   - **Device Access Token:** Your gateway device token from ThingsBoard (encrypted before storage)
+   - **Config URL (Optional):** Remote config server URL (e.g., `https://hoptech.co.nz/bgw-config/`)
+   - **Config Username (Optional):** Username for config server authentication
+   - **Config Password (Optional):** Password for config server (encrypted before storage)
 5. Click "Save and Restart"
 
-The configuration is stored in EEPROM and persists across reboots.
+The configuration is stored in EEPROM with encryption and persists across reboots.
+
+### Config URL Fallback
+
+If MQTT connection fails, the gateway can automatically fetch updated configuration from a remote server. The config URL should return a JSON response with the following format:
+
+```json
+{
+  "mqtt_host": "mqtt.thingsboard.cloud",
+  "mqtt_token": "your-device-token",
+  "device_token": "alternative-field-for-token"
+}
+```
+
+The gateway will automatically use basic authentication if credentials are provided.
 
 ## OTA Firmware Updates
 
@@ -123,7 +140,19 @@ The gateway reports its firmware status via device attributes:
 
 ## Current Firmware Version
 
-**v1.0.0** - Initial release (2025-01-17)
+**v1.1.0** - Multi-threading and improved stability (2025-01-19)
+
+### New in v1.1.0
+- ✅ **Multi-threaded architecture** using FreeRTOS tasks
+  - MQTT maintenance task for keepalives and reconnection
+  - BLE scanning task for continuous device discovery
+  - Message processing task for batch operations
+- ✅ **NTP time synchronization** for accurate timestamps
+- ✅ **Config URL fallback** - fetch MQTT settings from remote server if connection fails
+- ✅ **Encrypted credential storage** - passwords encrypted in EEPROM
+- ✅ **Enhanced MQTT stability** - improved reconnection logic
+- ✅ **Gateway temperature reporting** - chip temperature included in telemetry
+- ✅ **Thread-safe operations** - mutex protection for shared resources
 
 ## Dependencies
 
@@ -200,10 +229,13 @@ The gateway reports its own telemetry and attributes:
 | `cpuFreqMHz` | integer | CPU frequency in MHz |
 | `flashSize` | integer | Flash size in bytes |
 | `freeHeap` | integer | Free heap memory in bytes |
+| `chipTemperature` | float | Internal chip temperature in °C |
 | `sdkVersion` | string | ESP-IDF SDK version |
 | `ipAddress` | string | Gateway IP address |
 | `macAddress` | string | Gateway WiFi MAC address |
 | `rssi` | integer | WiFi signal strength in dBm |
+| `timeSynced` | boolean | Whether NTP time sync was successful |
+| `timestamp` | integer | Current Unix timestamp (if time synced) |
 | `otaPartition` | string | Active OTA partition label |
 | `otaPartitionSize` | integer | OTA partition size in bytes |
 
@@ -213,19 +245,53 @@ The gateway reports its own telemetry and attributes:
 BLE Sensors → ESP32 Gateway → MQTT → ThingsBoard
                     ↓
               OTA Updates (HTTPS)
+                    ↓
+           Config Fallback (HTTPS)
+                    ↓
+            NTP Time Sync (UDP)
 ```
+
+### Multi-threaded Architecture
+
+The gateway uses FreeRTOS tasks for concurrent operation:
+
+1. **MQTT Maintenance Task (Core 0, Priority 2)**
+   - Maintains MQTT connection with keepalives
+   - Handles automatic reconnection
+   - Processes incoming messages and RPC commands
+   - Sends periodic gateway status updates
+   - Manages OTA update process
+
+2. **BLE Scanning Task (Core 1, Priority 1)**
+   - Continuously scans for BLE advertisements
+   - Runs on dedicated core for optimal performance
+   - Scans every 10 seconds with 5-second scan windows
+   - Handles BLE device callbacks
+
+3. **Message Processing Task (Core 0, Priority 1)**
+   - Batches detected BLE devices
+   - Sends telemetry to ThingsBoard every 60 seconds
+   - Thread-safe access to shared data structures
 
 ### Data Flow
 
-1. **BLE Scanning:** Gateway scans for BLE advertisements every 10 seconds
-2. **Parsing:** Advertisements are parsed based on service UUID and data format
-3. **Deduplication:** Identical advertisements are filtered (only RSSI updated)
-4. **Batching:** Detected devices are batched and sent every 60 seconds
-5. **MQTT Publishing:**
+1. **Startup Sequence:**
+   - Load configuration from EEPROM
+   - Connect to WiFi (fallback to AP mode if failed)
+   - Synchronize time with NTP servers
+   - Connect to MQTT (fallback to config URL if failed)
+   - Start FreeRTOS tasks
+
+2. **BLE Scanning:** Gateway scans for BLE advertisements every 10 seconds (dedicated task)
+3. **Parsing:** Advertisements are parsed based on service UUID and data format
+4. **Deduplication:** Identical advertisements are filtered (only RSSI updated)
+5. **Batching:** Detected devices are batched and sent every 60 seconds (processing task)
+6. **MQTT Publishing:** (maintenance task)
    - Device connection messages (`v1/gateway/connect`)
    - Device attributes (`v1/gateway/attributes`)
    - Device telemetry (`v1/gateway/telemetry`)
-6. **OTA Updates:** Gateway listens for firmware update requests via MQTT
+7. **MQTT Keepalive:** Continuous connection monitoring and automatic reconnection
+8. **OTA Updates:** Gateway listens for firmware update requests via MQTT
 
 ### Topics Used
 
@@ -300,6 +366,22 @@ WiFi.softAP("BLE-Gateway-Setup", "12345678");
 - Check ThingsBoard gateway device has proper permissions
 - Look for errors in ThingsBoard logs
 - Ensure device types exist in ThingsBoard
+
+### Config URL Fallback Not Working
+
+- Verify config URL is accessible from ESP32
+- Check HTTP response is valid JSON
+- Ensure authentication credentials are correct (if used)
+- Look for HTTP error codes in Serial Monitor
+- Verify server accepts the device MAC address header
+
+### Time Not Syncing
+
+- Check NTP servers are accessible from your network
+- Verify firewall allows UDP port 123
+- Try alternative NTP servers
+- Check Serial Monitor for NTP sync messages
+- System will continue to operate without time sync
 
 ## Development
 
@@ -384,7 +466,7 @@ Name: Hoptech Sensor
 ## Future Enhancements
 
 - [ ] MQTT over TLS/SSL (port 8883)
-- [ ] Encrypted EEPROM storage
+- [x] ~~Encrypted EEPROM storage~~ (Implemented in v1.1.0)
 - [ ] Web dashboard for configuration
 - [ ] Support for more BLE sensor types
 - [ ] Local data caching during network outages
@@ -393,6 +475,9 @@ Name: Hoptech Sensor
 - [ ] Configurable scan intervals via ThingsBoard
 - [ ] Firmware rollback on failed updates
 - [ ] Battery-powered operation with deep sleep
+- [x] ~~Multi-threaded operation~~ (Implemented in v1.1.0)
+- [x] ~~NTP time synchronization~~ (Implemented in v1.1.0)
+- [x] ~~Config URL fallback~~ (Implemented in v1.1.0)
 
 ## Contributing
 
@@ -409,6 +494,25 @@ This is a private repository. Contact the author for collaboration opportunities
 This software is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.
 
 ## Changelog
+
+### v1.1.0 (2025-01-19)
+
+**Multi-threading and Improved Stability**
+
+- ✅ Multi-threaded architecture using FreeRTOS
+  - MQTT maintenance task (Core 0, Priority 2)
+  - BLE scanning task (Core 1, Priority 1)
+  - Message processing task (Core 0, Priority 1)
+- ✅ Thread-safe operations with mutex protection
+- ✅ NTP time synchronization
+- ✅ Config URL fallback for automatic MQTT credential retrieval
+- ✅ Encrypted credential storage (XOR encryption)
+- ✅ Enhanced MQTT reconnection logic
+- ✅ Improved web configuration portal with better UI
+- ✅ Gateway chip temperature reporting
+- ✅ Timestamp reporting in telemetry
+- ✅ Better error handling and recovery
+- ✅ Optimized core utilization (BLE on Core 1, MQTT on Core 0)
 
 ### v1.0.0 (2025-01-17)
 
