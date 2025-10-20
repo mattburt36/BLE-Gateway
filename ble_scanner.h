@@ -6,6 +6,9 @@
 #include <BLEAdvertisedDevice.h>
 #include <map>
 
+// Forward declaration
+struct OTAState;
+
 // BLE scan configuration
 const int SCAN_TIME = 5;
 

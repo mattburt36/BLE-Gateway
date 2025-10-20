@@ -125,11 +125,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     
     // Handle shared attributes updates (firmware updates from ThingsBoard)
     if (topicStr == "v1/devices/me/attributes" || topicStr.indexOf("/attributes") >= 0) {
-        JsonObject shared = doc.containsKey("shared") ? doc["shared"].as<JsonObject>() : doc.as<JsonObject>();
+        JsonObject shared = doc["shared"].is<JsonObject>() ? doc["shared"].as<JsonObject>() : doc.as<JsonObject>();
         
         // Check for firmware update attributes
-        if (shared.containsKey("fw_title") || shared.containsKey("fw_version") || 
-            shared.containsKey("fw_url") || shared.containsKey("target_fw_version")) {
+        if (shared["fw_title"].is<String>() || shared["fw_version"].is<String>() || 
+            shared["fw_url"].is<String>() || shared["target_fw_version"].is<String>()) {
             
             otaState.firmwareTitle = shared["fw_title"] | FIRMWARE_TITLE;
             otaState.firmwareVersion = shared["fw_version"] | shared["target_fw_version"] | "";
@@ -156,7 +156,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     
     // Handle RPC requests
     if (topicStr.indexOf("/rpc/request/") >= 0) {
-        if (doc.containsKey("method")) {
+        if (doc["method"].is<String>()) {
             String method = doc["method"].as<String>();
             
             // Extract request ID for response
