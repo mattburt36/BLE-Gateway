@@ -77,6 +77,7 @@ bool fetchConfigFromURL() {
     
     HTTPClient http;
     http.begin(config_url);
+    http.setTimeout(10000); // 10 second timeout to prevent watchdog issues
     
     // Add basic authentication if credentials are provided
     if (config_username.length() > 0 && config_password.length() > 0) {
