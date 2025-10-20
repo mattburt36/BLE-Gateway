@@ -103,7 +103,7 @@ void setup() {
         setupWebServer();
     }
 
-    client.setBufferSize(8192);
+    client.setBufferSize(16384);
 
     initBLEScanner();
     
@@ -219,5 +219,4 @@ void loop() {
 
     // Main loop just yields to tasks
     delay(100);
-}
 }

@@ -346,9 +346,9 @@ void sendBatchToThingsBoardGateway() {
     // Yield to watchdog between MQTT operations
     bool inTask = xTaskGetCurrentTaskHandle() != NULL;
     if (inTask) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     } else {
-        delay(100);
+        delay(500);
     }
 
     // Step 2: Send attributes
@@ -380,9 +380,9 @@ void sendBatchToThingsBoardGateway() {
     
     // Yield to watchdog between MQTT operations
     if (inTask) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     } else {
-        delay(100);
+        delay(500);
     }
 
     // Step 3: Send telemetry
