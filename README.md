@@ -35,12 +35,14 @@ ESP32-based BLE to MQTT gateway for MOKO L02S temperature/humidity sensors with 
 
 ## Installation
 
-1. Open `BLE-WiFi-Gateway.ino` in Arduino IDE
+1. Open `BLE-WiFi-Gateway.ino` in Arduino IDE (all `.h` files will be automatically included)
 2. Install required libraries (see Dependencies)
 3. Upload to ESP32
 4. Connect to `BLE-Gateway-Setup` WiFi network (password: `12345678`)
 5. Navigate to `192.168.4.1` and configure WiFi and ThingsBoard credentials
 6. Gateway will auto-connect and start scanning
+
+**Note:** The project uses a modular structure with separate header files for each major component. See [MODULARIZATION.md](MODULARIZATION.md) for details.
 
 ## Configuration
 
@@ -240,6 +242,21 @@ The gateway reports its own telemetry and attributes:
 | `otaPartitionSize` | integer | OTA partition size in bytes |
 
 ## Architecture
+
+### Code Structure
+
+The project is organized into modular components:
+
+- `BLE-WiFi-Gateway.ino` - Main application (setup, loop, globals)
+- `config_manager.h` - Configuration storage and encryption
+- `wifi_manager.h` - WiFi and configuration portal
+- `ble_scanner.h` - BLE scanning and sensor parsing
+- `ota_manager.h` - Firmware update handling
+- `mqtt_handler.h` - MQTT/ThingsBoard integration
+
+See [MODULARIZATION.md](MODULARIZATION.md) for detailed module documentation.
+
+### Data Flow
 
 ```
 BLE Sensors → ESP32 Gateway → MQTT → ThingsBoard

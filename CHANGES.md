@@ -2,7 +2,29 @@
 
 ## Overview
 
-This release addresses the reported MQTT connection stability issues and implements the requested multi-threaded architecture with improved reliability features.
+This release addresses the reported MQTT connection stability issues and implements the requested multi-threaded architecture with improved reliability features. Additionally, the codebase has been refactored into a modular structure for better maintainability.
+
+## Modularization (2025-10-20) ✅
+
+**Issue:** "could you now make this into multiple code files relative to it's related modules? IE ble scanning in one file, mqtt handling in one file, wifi handling in another"
+
+**Solution:** Refactored the monolithic ~1330-line file into 6 modular files:
+
+1. **config_manager.h** - EEPROM storage, encryption, config URL fallback
+2. **wifi_manager.h** - WiFi connection, NTP sync, configuration portal
+3. **ble_scanner.h** - BLE scanning, sensor parsing, advertisement processing
+4. **ota_manager.h** - Over-the-air firmware update implementation
+5. **mqtt_handler.h** - MQTT/ThingsBoard gateway operations, FreeRTOS tasks
+6. **BLE-WiFi-Gateway.ino** - Main file (setup, loop, global variables)
+
+**Benefits:**
+- Each module has a single, clear responsibility
+- Easier to locate and modify specific functionality
+- Better code organization and readability
+- Simplified maintenance and testing
+- Clear separation of concerns
+
+See [MODULARIZATION.md](MODULARIZATION.md) for detailed module documentation.
 
 ## Problem Statement Addressed
 
