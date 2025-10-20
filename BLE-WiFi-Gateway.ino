@@ -21,8 +21,8 @@
 // Include modular components
 #include "config_manager.h"
 #include "wifi_manager.h"
-#include "ble_scanner.h"
 #include "ota_manager.h"
+#include "ble_scanner.h"
 #include "mqtt_handler.h"
 
 // Global configuration variables (defined here, declared as extern in modules)
@@ -219,4 +219,5 @@ void loop() {
 
     // Main loop just yields to tasks
     delay(100);
+}
 }
