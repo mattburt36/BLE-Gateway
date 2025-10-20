@@ -228,7 +228,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 bool tryMQTT() {
     if (client.connected()) client.disconnect();
     espClient.stop();
-    delay(100);
+    
+    // Use vTaskDelay if called from FreeRTOS task, otherwise use delay
+    bool inTask = xTaskGetCurrentTaskHandle() != NULL;
+    if (inTask) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } else {
+        delay(100);
+    }
+    
     client.setServer(thingsboard_host.c_str(), 1883);
     client.setCallback(mqttCallback);
     client.setKeepAlive(60);
@@ -258,7 +266,11 @@ bool tryMQTT() {
             client.publish("v1/devices/me/attributes/request/1", "{\"sharedKeys\":\"fw_title,fw_version,fw_url,fw_size,fw_checksum,target_fw_version\"}");
             
             // Send gateway attributes
-            delay(500);
+            if (inTask) {
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+            } else {
+                delay(500);
+            }
             sendGatewayAttributes();
             
             return true;
@@ -266,7 +278,13 @@ bool tryMQTT() {
             Serial.print("failed, rc=");
             Serial.print(client.state());
             Serial.println(" try again in 2 seconds");
-            delay(2000);
+            
+            // Use vTaskDelay to yield to watchdog during retry delays
+            if (inTask) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+            } else {
+                delay(2000);
+            }
         }
     }
     
@@ -276,7 +294,11 @@ bool tryMQTT() {
         if (fetchConfigFromURL()) {
             // Retry MQTT with potentially updated credentials
             Serial.println("Retrying MQTT with updated config...");
-            delay(1000);
+            if (inTask) {
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+            } else {
+                delay(1000);
+            }
             return tryMQTT(); // Recursive call with updated config
         }
     }
@@ -321,7 +343,13 @@ void sendBatchToThingsBoardGateway() {
     bool connectOk = client.publish("v1/gateway/connect", connectPayload.c_str());
     Serial.printf("Device connect: %s\n", connectOk ? "✓ OK" : "✗ FAILED");
     
-    delay(100);
+    // Yield to watchdog between MQTT operations
+    bool inTask = xTaskGetCurrentTaskHandle() != NULL;
+    if (inTask) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } else {
+        delay(100);
+    }
 
     // Step 2: Send attributes
     JsonDocument attrDoc;
@@ -350,7 +378,12 @@ void sendBatchToThingsBoardGateway() {
     bool attrOk = client.publish("v1/gateway/attributes", attrPayload.c_str());
     Serial.printf("Attributes: %s\n", attrOk ? "✓ OK" : "✗ FAILED");
     
-    delay(100);
+    // Yield to watchdog between MQTT operations
+    if (inTask) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } else {
+        delay(100);
+    }
 
     // Step 3: Send telemetry
     JsonDocument telemetryDoc;
@@ -434,7 +467,8 @@ void mqttMaintenanceTask(void* parameter) {
             // Try to reconnect every 30 seconds
             if (now - lastReconnect > 30000) {
                 Serial.println("MQTT disconnected, attempting reconnect...");
-                if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+                // Take mutex with timeout to avoid indefinite blocking
+                if (xSemaphoreTake(mqttMutex, 1000 / portTICK_PERIOD_MS) == pdTRUE) {
                     if (tryMQTT()) {
                         Serial.println("MQTT reconnected successfully!");
                         mqttFailStart = 0;
@@ -448,6 +482,9 @@ void mqttMaintenanceTask(void* parameter) {
                 }
                 lastReconnect = now;
             }
+            
+            // Yield to watchdog even if not attempting reconnect
+            vTaskDelay(100 / portTICK_PERIOD_MS);
         } else {
             mqtt_connected = true;
             

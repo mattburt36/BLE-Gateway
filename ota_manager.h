@@ -113,7 +113,13 @@ bool performOTAUpdate() {
             }
         }
         
-        delay(1);
+        // Yield to watchdog during OTA download
+        bool inTask = xTaskGetCurrentTaskHandle() != NULL;
+        if (inTask) {
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        } else {
+            delay(1);
+        }
     }
     
     http.end();
@@ -139,10 +145,20 @@ bool performOTAUpdate() {
     Serial.println("Update complete!");
     sendOTAStatus("UPDATED", 100);
     
-    delay(1000);
+    // Yield to watchdog before restart
+    bool inTask = xTaskGetCurrentTaskHandle() != NULL;
+    if (inTask) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    } else {
+        delay(1000);
+    }
     
     Serial.println("Rebooting...");
-    delay(1000);
+    if (inTask) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    } else {
+        delay(1000);
+    }
     
     ESP.restart();
     
