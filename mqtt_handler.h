@@ -6,6 +6,8 @@
 #include <WiFi.h>
 #include <map>
 #include <time.h>
+#include "ota_manager.h"
+#include "ble_scanner.h"
 
 // External references
 extern String thingsboard_host;
