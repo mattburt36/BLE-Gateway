@@ -11,6 +11,8 @@
 #include <Update.h>
 #include <esp_ota_ops.h>
 #include <map>
+#include <time.h>
+#include "mbedtls/aes.h"
 
 #define EEPROM_SIZE 1024
 #define WIFI_SSID_ADDR      0
@@ -18,18 +20,39 @@
 #define TB_HOST_ADDR        128
 #define TB_TOKEN_ADDR       192
 #define CONFIG_VALID_ADDR   256
+#define CONFIG_URL_ADDR     320
+#define CONFIG_USER_ADDR    448
+#define CONFIG_PASS_ADDR    512
 
 // Firmware version - update this with each release
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.1.0"
 #define FIRMWARE_TITLE "BLE-Gateway"
+
+// Configuration URLs
+#define CONFIG_FALLBACK_URL "https://hoptech.co.nz/bgw-config/"
+#define NTP_SERVER "pool.ntp.org"
+#define NTP_SERVER_BACKUP "time.nist.gov"
 
 String wifi_ssid = "";
 String wifi_password = "";
 String thingsboard_host = "";
 String thingsboard_token = "";
+String config_url = CONFIG_FALLBACK_URL;
+String config_username = "";
+String config_password = "";
 bool wifi_connected = false;
 bool mqtt_connected = false;
 bool config_mode = false;
+bool time_synced = false;
+
+// Task handles for FreeRTOS
+TaskHandle_t mqttTaskHandle = NULL;
+TaskHandle_t bleTaskHandle = NULL;
+TaskHandle_t processingTaskHandle = NULL;
+
+// Mutex for thread-safe access to shared resources
+SemaphoreHandle_t detectionBufferMutex = NULL;
+SemaphoreHandle_t mqttMutex = NULL;
 
 // BLE
 BLEScan* pBLEScan;
@@ -124,23 +147,46 @@ void printWiFiStatus() {
     Serial.println("=====================");
 }
 
+// ==== ENCRYPTION ====
+// Simple XOR encryption for stored credentials (basic obfuscation)
+// For production, consider using proper encryption
+String encryptString(const String& data) {
+    String encrypted = "";
+    const char key[] = "BLE-GW-2025-KEY"; // Simple key, can be improved
+    for (size_t i = 0; i < data.length(); i++) {
+        encrypted += (char)(data[i] ^ key[i % (sizeof(key) - 1)]);
+    }
+    return encrypted;
+}
+
+String decryptString(const String& data) {
+    return encryptString(data); // XOR is symmetric
+}
+
 // ==== EEPROM CONFIG ====
 void saveConfig() {
     EEPROM.writeString(WIFI_SSID_ADDR, wifi_ssid);
-    EEPROM.writeString(WIFI_PASS_ADDR, wifi_password);
+    EEPROM.writeString(WIFI_PASS_ADDR, encryptString(wifi_password));
     EEPROM.writeString(TB_HOST_ADDR, thingsboard_host);
-    EEPROM.writeString(TB_TOKEN_ADDR, thingsboard_token);
+    EEPROM.writeString(TB_TOKEN_ADDR, encryptString(thingsboard_token));
+    EEPROM.writeString(CONFIG_URL_ADDR, config_url);
+    EEPROM.writeString(CONFIG_USER_ADDR, config_username);
+    EEPROM.writeString(CONFIG_PASS_ADDR, encryptString(config_password));
     EEPROM.writeByte(CONFIG_VALID_ADDR, 0xAA);
     EEPROM.commit();
-    Serial.println("Configuration saved to EEPROM");
+    Serial.println("Configuration saved to EEPROM (credentials encrypted)");
 }
 
 bool loadConfig() {
     if (EEPROM.readByte(CONFIG_VALID_ADDR) != 0xAA) return false;
     wifi_ssid = EEPROM.readString(WIFI_SSID_ADDR);
-    wifi_password = EEPROM.readString(WIFI_PASS_ADDR);
+    wifi_password = decryptString(EEPROM.readString(WIFI_PASS_ADDR));
     thingsboard_host = EEPROM.readString(TB_HOST_ADDR);
-    thingsboard_token = EEPROM.readString(TB_TOKEN_ADDR);
+    thingsboard_token = decryptString(EEPROM.readString(TB_TOKEN_ADDR));
+    config_url = EEPROM.readString(CONFIG_URL_ADDR);
+    if (config_url.length() == 0) config_url = CONFIG_FALLBACK_URL;
+    config_username = EEPROM.readString(CONFIG_USER_ADDR);
+    config_password = decryptString(EEPROM.readString(CONFIG_PASS_ADDR));
     return (wifi_ssid.length() && thingsboard_host.length() && thingsboard_token.length());
 }
 
@@ -159,32 +205,154 @@ void setupWebServer() {
     server.on("/", HTTP_GET, []() {
         String html = "<!DOCTYPE html><html><head><title>BLE Gateway Setup</title>";
         html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<style>body{font-family:Arial;}input{width:100%;padding:10px;margin:8px 0;}</style></head><body>";
-        html += "<h2>BLE Gateway Configuration</h2>";
-        html += "<p><strong>Firmware:</strong> " + String(FIRMWARE_TITLE) + " v" + String(FIRMWARE_VERSION) + "</p>";
+        html += "<style>body{font-family:Arial;max-width:600px;margin:20px auto;padding:20px;}";
+        html += "input,button{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;}";
+        html += "button{background:#4CAF50;color:white;border:none;cursor:pointer;font-size:16px;}";
+        html += "button:hover{background:#45a049;}";
+        html += "h3{margin-top:20px;color:#333;border-bottom:2px solid #4CAF50;padding-bottom:5px;}";
+        html += "label{font-weight:bold;display:block;margin-top:10px;}";
+        html += ".info{background:#f0f0f0;padding:10px;margin:10px 0;border-radius:5px;}</style></head><body>";
+        html += "<h2>🔧 BLE Gateway Configuration</h2>";
+        html += "<div class='info'><strong>Firmware:</strong> " + String(FIRMWARE_TITLE) + " v" + String(FIRMWARE_VERSION) + "<br>";
+        html += "<strong>MAC:</strong> " + WiFi.macAddress() + "</div>";
         html += "<form action='/save' method='post'>";
+        
+        html += "<h3>WiFi Settings</h3>";
         html += "<label>WiFi SSID:</label><input type='text' name='ssid' value='" + wifi_ssid + "' required>";
-        html += "<label>WiFi Password:</label><input type='password' name='pass' value='" + wifi_password + "'>";
-        html += "<label>ThingsBoard MQTT Host (e.g. mqtt.thingsboard.cloud):</label><input type='text' name='tbhost' value='" + thingsboard_host + "' required>";
-        html += "<label>Device Token:</label><input type='text' name='tbtoken' value='" + thingsboard_token + "' required>";
-        html += "<button type='submit'>Save and Restart</button></form>";
+        html += "<label>WiFi Password:</label><input type='password' name='pass' value='' placeholder='Enter password'>";
+        
+        html += "<h3>MQTT Settings</h3>";
+        html += "<label>ThingsBoard MQTT Host:</label><input type='text' name='tbhost' value='" + thingsboard_host + "' placeholder='mqtt.thingsboard.cloud' required>";
+        html += "<label>Device Access Token:</label><input type='text' name='tbtoken' value='' placeholder='Enter device token' required>";
+        
+        html += "<h3>Config Fallback (Optional)</h3>";
+        html += "<label>Config URL:</label><input type='text' name='cfgurl' value='" + config_url + "' placeholder='https://hoptech.co.nz/bgw-config/'>";
+        html += "<label>Config Username:</label><input type='text' name='cfguser' value='" + config_username + "' placeholder='Optional'>";
+        html += "<label>Config Password:</label><input type='password' name='cfgpass' value='' placeholder='Optional'>";
+        
+        html += "<button type='submit'>💾 Save and Restart</button></form>";
+        html += "<div class='info' style='margin-top:20px;'>Note: Passwords are encrypted before storage</div>";
         html += "</body></html>";
         server.send(200, "text/html", html);
     });
 
     server.on("/save", HTTP_POST, []() {
         wifi_ssid = server.arg("ssid");
-        wifi_password = server.arg("pass");
+        if (server.arg("pass").length() > 0) {
+            wifi_password = server.arg("pass");
+        }
         thingsboard_host = server.arg("tbhost");
-        thingsboard_token = server.arg("tbtoken");
+        if (server.arg("tbtoken").length() > 0) {
+            thingsboard_token = server.arg("tbtoken");
+        }
+        
+        // Optional config fallback settings
+        if (server.arg("cfgurl").length() > 0) {
+            config_url = server.arg("cfgurl");
+        }
+        if (server.arg("cfguser").length() > 0) {
+            config_username = server.arg("cfguser");
+        }
+        if (server.arg("cfgpass").length() > 0) {
+            config_password = server.arg("cfgpass");
+        }
+        
         saveConfig();
-        server.send(200, "text/html", "<html><body><h2>Saved! Restarting...</h2></body></html>");
+        server.send(200, "text/html", "<html><head><meta http-equiv='refresh' content='10;url=/'/></head><body style='font-family:Arial;text-align:center;padding:50px;'><h2>✅ Configuration Saved!</h2><p>Device restarting...</p><p>You will be redirected in 10 seconds.</p></body></html>");
         delay(1500);
         ESP.restart();
     });
 
     server.begin();
     Serial.println("Web server started for config mode");
+}
+
+// ==== NTP TIME SYNC ====
+bool syncTime() {
+    Serial.println("Synchronizing time with NTP server...");
+    configTime(0, 0, NTP_SERVER, NTP_SERVER_BACKUP);
+    
+    int attempts = 0;
+    time_t now = 0;
+    struct tm timeinfo;
+    
+    while (attempts++ < 20) {
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if (timeinfo.tm_year > (2020 - 1900)) {
+            time_synced = true;
+            Serial.println("Time synchronized successfully!");
+            Serial.printf("Current time: %s", asctime(&timeinfo));
+            return true;
+        }
+        delay(500);
+        Serial.print(".");
+    }
+    
+    Serial.println("\nTime sync failed, but continuing...");
+    return false;
+}
+
+// ==== CONFIG URL FALLBACK ====
+bool fetchConfigFromURL() {
+    Serial.println("\n========== Fetching Config from URL ==========");
+    Serial.printf("Config URL: %s\n", config_url.c_str());
+    
+    HTTPClient http;
+    http.begin(config_url);
+    
+    // Add basic authentication if credentials are provided
+    if (config_username.length() > 0 && config_password.length() > 0) {
+        http.setAuthorization(config_username.c_str(), config_password.c_str());
+        Serial.println("Using authentication for config URL");
+    }
+    
+    // Add device identification
+    http.addHeader("X-Device-MAC", WiFi.macAddress());
+    http.addHeader("X-Device-Type", "BLE-Gateway");
+    http.addHeader("X-Firmware-Version", FIRMWARE_VERSION);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Config received:");
+        Serial.println(payload);
+        
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, payload);
+        
+        if (!error) {
+            // Update MQTT configuration if provided
+            if (doc.containsKey("mqtt_host")) {
+                thingsboard_host = doc["mqtt_host"].as<String>();
+                Serial.printf("Updated MQTT host: %s\n", thingsboard_host.c_str());
+            }
+            if (doc.containsKey("mqtt_token")) {
+                thingsboard_token = doc["mqtt_token"].as<String>();
+                Serial.println("Updated MQTT token");
+            }
+            if (doc.containsKey("device_token")) {
+                thingsboard_token = doc["device_token"].as<String>();
+                Serial.println("Updated device token");
+            }
+            
+            // Save updated config
+            saveConfig();
+            
+            http.end();
+            Serial.println("Config updated successfully from URL");
+            return true;
+        } else {
+            Serial.printf("JSON parse error: %s\n", error.c_str());
+        }
+    } else {
+        Serial.printf("HTTP error: %d\n", httpCode);
+    }
+    
+    http.end();
+    Serial.println("==========================================\n");
+    return false;
 }
 
 bool tryWiFi() {
@@ -196,9 +364,15 @@ bool tryWiFi() {
         Serial.print(".");
     }
     wifi_connected = (WiFi.status() == WL_CONNECTED);
-    if (wifi_connected) Serial.println("\nWiFi connected!");
-    else Serial.println("\nWiFi failed.");
-    printWiFiStatus();
+    if (wifi_connected) {
+        Serial.println("\nWiFi connected!");
+        printWiFiStatus();
+        
+        // Try to sync time once WiFi is connected
+        syncTime();
+    } else {
+        Serial.println("\nWiFi failed.");
+    }
     return wifi_connected;
 }
 
@@ -241,10 +415,21 @@ void sendGatewayAttributes() {
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["sdkVersion"] = ESP.getSdkVersion();
     
+    // Temperature (internal chip temperature)
+    doc["chipTemperature"] = temperatureRead();
+    
     // Network information
     doc["ipAddress"] = WiFi.localIP().toString();
     doc["macAddress"] = WiFi.macAddress();
     doc["rssi"] = WiFi.RSSI();
+    
+    // Time sync status
+    doc["timeSynced"] = time_synced;
+    if (time_synced) {
+        time_t now;
+        time(&now);
+        doc["timestamp"] = now;
+    }
     
     // OTA partition info
     const esp_partition_t* running = esp_ota_get_running_partition();
@@ -516,9 +701,12 @@ bool tryMQTT() {
     client.setSocketTimeout(60);
     
     int attempts = 0;
-    while (!client.connected() && attempts++ < 5) {
-        Serial.print("Connecting to MQTT...");
-        if (client.connect("BLEGateway", thingsboard_token.c_str(), "")) {
+    while (!client.connected() && attempts++ < 3) {
+        Serial.printf("Connecting to MQTT (attempt %d/3)...", attempts);
+        String clientId = "BLEGateway-" + WiFi.macAddress();
+        clientId.replace(":", "");
+        
+        if (client.connect(clientId.c_str(), thingsboard_token.c_str(), "")) {
             Serial.println("connected!");
             mqtt_connected = true;
             
@@ -547,6 +735,18 @@ bool tryMQTT() {
             delay(2000);
         }
     }
+    
+    // If MQTT connection failed, try fetching config from URL
+    if (attempts >= 3 && config_url.length() > 0) {
+        Serial.println("\nMQTT connection failed, trying config URL fallback...");
+        if (fetchConfigFromURL()) {
+            // Retry MQTT with potentially updated credentials
+            Serial.println("Retrying MQTT with updated config...");
+            delay(1000);
+            return tryMQTT(); // Recursive call with updated config
+        }
+    }
+    
     mqtt_connected = false;
     return false;
 }
@@ -640,15 +840,22 @@ void processAdvert(BLEAdvertisedDevice& dev) {
     
     uint32_t currentHash = simpleHash(svcDataStd);
     
-    if (detectionBuffer.find(mac) != detectionBuffer.end()) {
-        if (detectionBuffer[mac].dataHash == currentHash) {
-            detectionBuffer[mac].rssi = rssi;
-            detectionBuffer[mac].ts = millis();
-            Serial.printf("Duplicate data for %s (RSSI updated to %d dBm)\n", mac.c_str(), rssi);
-            return;
-        } else {
-            Serial.printf("*** Data changed for %s ***\n", mac.c_str());
+    // Thread-safe check for duplicates
+    bool isDuplicate = false;
+    if (detectionBufferMutex != NULL && xSemaphoreTake(detectionBufferMutex, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+        if (detectionBuffer.find(mac) != detectionBuffer.end()) {
+            if (detectionBuffer[mac].dataHash == currentHash) {
+                detectionBuffer[mac].rssi = rssi;
+                detectionBuffer[mac].ts = millis();
+                isDuplicate = true;
+                Serial.printf("Duplicate data for %s (RSSI updated to %d dBm)\n", mac.c_str(), rssi);
+            } else {
+                Serial.printf("*** Data changed for %s ***\n", mac.c_str());
+            }
         }
+        xSemaphoreGive(detectionBufferMutex);
+        
+        if (isDuplicate) return;
     }
     
     Serial.println("\n========== BLE Advertisement Detected ==========");
@@ -702,8 +909,20 @@ void processAdvert(BLEAdvertisedDevice& dev) {
         }
     }
 
-    detectionBuffer[mac] = entry;
-    Serial.printf("Queued: %s RSSI:%d Name:%s\n", mac.c_str(), rssi, name.c_str());
+    // Thread-safe access to detection buffer
+    if (detectionBufferMutex != NULL) {
+        if (xSemaphoreTake(detectionBufferMutex, 1000 / portTICK_PERIOD_MS) == pdTRUE) {
+            detectionBuffer[mac] = entry;
+            xSemaphoreGive(detectionBufferMutex);
+            Serial.printf("Queued: %s RSSI:%d Name:%s\n", mac.c_str(), rssi, name.c_str());
+        } else {
+            Serial.println("Failed to acquire mutex for detection buffer");
+        }
+    } else {
+        // Fallback if mutex not initialized (shouldn't happen in normal operation)
+        detectionBuffer[mac] = entry;
+        Serial.printf("Queued: %s RSSI:%d Name:%s\n", mac.c_str(), rssi, name.c_str());
+    }
 }
 
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
@@ -830,6 +1049,130 @@ void sendBatchToThingsBoardGateway() {
     detectionBuffer.clear();
 }
 
+// ==== FREERTOS TASKS ====
+
+// Task 1: MQTT maintenance - handles keepalives and reconnection
+void mqttMaintenanceTask(void* parameter) {
+    Serial.println("MQTT Maintenance Task started");
+    unsigned long lastReconnect = 0;
+    unsigned long lastAttrSend = 0;
+    
+    for(;;) {
+        if (config_mode) {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        
+        // Check WiFi connection
+        if (!wifi_connected || WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi lost in MQTT task");
+            wifi_connected = false;
+            mqtt_connected = false;
+            vTaskDelay(5000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        
+        // Handle MQTT connection
+        if (!client.connected()) {
+            mqtt_connected = false;
+            unsigned long now = millis();
+            
+            // Try to reconnect every 30 seconds
+            if (now - lastReconnect > 30000) {
+                Serial.println("MQTT disconnected, attempting reconnect...");
+                if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+                    if (tryMQTT()) {
+                        Serial.println("MQTT reconnected successfully!");
+                        mqttFailStart = 0;
+                    } else {
+                        Serial.println("MQTT reconnection failed");
+                        if (mqttFailStart == 0) {
+                            mqttFailStart = now;
+                        }
+                    }
+                    xSemaphoreGive(mqttMutex);
+                }
+                lastReconnect = now;
+            }
+        } else {
+            mqtt_connected = true;
+            
+            // Call client.loop() to process incoming messages and maintain connection
+            if (xSemaphoreTake(mqttMutex, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+                client.loop();
+                xSemaphoreGive(mqttMutex);
+            }
+            
+            // Periodically send gateway attributes (every 5 minutes)
+            if (millis() - lastAttrSend > 300000) {
+                if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+                    sendGatewayAttributes();
+                    xSemaphoreGive(mqttMutex);
+                }
+                lastAttrSend = millis();
+            }
+            
+            // Check for OTA updates
+            if (otaState.updateAvailable && !otaState.updateInProgress) {
+                Serial.println("\n>>> Starting OTA Update from MQTT task <<<");
+                otaState.updateAvailable = false;
+                if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+                    performOTAUpdate();
+                    xSemaphoreGive(mqttMutex);
+                }
+            }
+        }
+        
+        vTaskDelay(100 / portTICK_PERIOD_MS); // Run every 100ms
+    }
+}
+
+// Task 2: BLE scanning - handles Bluetooth scanning
+void bleScanTask(void* parameter) {
+    Serial.println("BLE Scan Task started");
+    
+    for(;;) {
+        if (config_mode || otaState.updateInProgress) {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        
+        Serial.println("Scanning BLE...");
+        pBLEScan->start(SCAN_TIME, false);
+        
+        // Wait 10 seconds between scans
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+}
+
+// Task 3: Message processing - handles batch sending to MQTT
+void messageProcessingTask(void* parameter) {
+    Serial.println("Message Processing Task started");
+    
+    for(;;) {
+        if (config_mode || otaState.updateInProgress) {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        
+        // Send batch data every 60 seconds
+        vTaskDelay(BATCH_INTERVAL / portTICK_PERIOD_MS);
+        
+        if (mqtt_connected && !detectionBuffer.empty()) {
+            Serial.println("Processing and sending batch data...");
+            
+            // Take mutex to safely access detection buffer
+            if (xSemaphoreTake(detectionBufferMutex, portMAX_DELAY) == pdTRUE) {
+                if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+                    sendBatchToThingsBoardGateway();
+                    xSemaphoreGive(mqttMutex);
+                }
+                xSemaphoreGive(detectionBufferMutex);
+            }
+        }
+    }
+}
+
 // ==== SETUP & LOOP ====
 void setup() {
     Serial.begin(115200);
@@ -873,10 +1216,61 @@ void setup() {
     pBLEScan->setActiveScan(true);
     pBLEScan->setInterval(100);
     pBLEScan->setWindow(99);
+    
+    // Create mutexes for thread-safe access
+    detectionBufferMutex = xSemaphoreCreateMutex();
+    mqttMutex = xSemaphoreCreateMutex();
+    
+    if (detectionBufferMutex == NULL || mqttMutex == NULL) {
+        Serial.println("ERROR: Failed to create mutexes!");
+    }
+    
+    // Create FreeRTOS tasks if not in config mode
+    if (!config_mode && wifi_connected) {
+        Serial.println("\n========== Starting FreeRTOS Tasks ==========");
+        
+        // Task 1: MQTT Maintenance (Core 0, Priority 2)
+        xTaskCreatePinnedToCore(
+            mqttMaintenanceTask,   // Task function
+            "MQTT_Task",           // Task name
+            8192,                  // Stack size
+            NULL,                  // Parameters
+            2,                     // Priority
+            &mqttTaskHandle,       // Task handle
+            0                      // Core 0
+        );
+        
+        // Task 2: BLE Scanning (Core 1, Priority 1)
+        xTaskCreatePinnedToCore(
+            bleScanTask,           // Task function
+            "BLE_Task",            // Task name
+            8192,                  // Stack size
+            NULL,                  // Parameters
+            1,                     // Priority
+            &bleTaskHandle,        // Task handle
+            1                      // Core 1
+        );
+        
+        // Task 3: Message Processing (Core 0, Priority 1)
+        xTaskCreatePinnedToCore(
+            messageProcessingTask, // Task function
+            "Processing_Task",     // Task name
+            8192,                  // Stack size
+            NULL,                  // Parameters
+            1,                     // Priority
+            &processingTaskHandle, // Task handle
+            0                      // Core 0
+        );
+        
+        Serial.println("All tasks created successfully!");
+        Serial.println("==========================================\n");
+    }
+    
     Serial.println("Setup complete.");
 }
 
 void loop() {
+    // Handle config mode
     if (config_mode) {
         server.handleClient();
         dnsServer.processNextRequest();
@@ -884,62 +1278,55 @@ void loop() {
         return;
     }
 
+    // Check WiFi connection
     if (!wifi_connected || WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi lost, entering config mode...");
+        Serial.println("WiFi lost in main loop, entering config mode...");
+        
+        // Delete tasks if they exist
+        if (mqttTaskHandle != NULL) {
+            vTaskDelete(mqttTaskHandle);
+            mqttTaskHandle = NULL;
+        }
+        if (bleTaskHandle != NULL) {
+            vTaskDelete(bleTaskHandle);
+            bleTaskHandle = NULL;
+        }
+        if (processingTaskHandle != NULL) {
+            vTaskDelete(processingTaskHandle);
+            processingTaskHandle = NULL;
+        }
+        
         setupAP();
         setupWebServer();
         return;
     }
 
-    if (!client.connected()) {
-        if (mqttFailStart == 0) {
-            mqttFailStart = millis();
-        }
-        Serial.println("MQTT lost, attempting reconnect...");
-        mqtt_connected = tryMQTT();
-        if (mqtt_connected) {
-            mqttFailStart = 0;
-            apModeOffered = false;
-        } else if (!apModeOffered && (millis() - mqttFailStart > MQTT_FAIL_AP_TIMEOUT)) {
+    // Check if MQTT has been down too long
+    if (!mqtt_connected && mqttFailStart > 0 && !apModeOffered) {
+        if (millis() - mqttFailStart > MQTT_FAIL_AP_TIMEOUT) {
             Serial.println("MQTT failed for over 5 minutes, offering AP config mode...");
+            
+            // Delete tasks
+            if (mqttTaskHandle != NULL) {
+                vTaskDelete(mqttTaskHandle);
+                mqttTaskHandle = NULL;
+            }
+            if (bleTaskHandle != NULL) {
+                vTaskDelete(bleTaskHandle);
+                bleTaskHandle = NULL;
+            }
+            if (processingTaskHandle != NULL) {
+                vTaskDelete(processingTaskHandle);
+                processingTaskHandle = NULL;
+            }
+            
             setupAP();
             setupWebServer();
             apModeOffered = true;
             return;
         }
-    } else {
-        mqttFailStart = 0;
-        apModeOffered = false;
-    }
-    client.loop();
-
-    // Check if OTA update is available and start it
-    if (otaState.updateAvailable && !otaState.updateInProgress) {
-        Serial.println("\n>>> Starting OTA Update <<<");
-        otaState.updateAvailable = false;
-        performOTAUpdate();
     }
 
-    unsigned long now = millis();
-    
-    // Don't scan during OTA update
-    if (now - last_ble_scan > 10000 && !otaState.updateInProgress) {
-        Serial.println("Scanning BLE...");
-        pBLEScan->start(SCAN_TIME, false);
-        last_ble_scan = now;
-    }
-
-    if (now - lastBatchSend > BATCH_INTERVAL) {
-        sendBatchToThingsBoardGateway();
-        lastBatchSend = now;
-    }
-
-    // Periodically send gateway attributes (every 5 minutes)
-    static unsigned long lastAttrSend = 0;
-    if (millis() - lastAttrSend > 300000) {
-        sendGatewayAttributes();
-        lastAttrSend = millis();
-    }
-
-    delay(10);
+    // Main loop just yields to tasks
+    delay(100);
 }

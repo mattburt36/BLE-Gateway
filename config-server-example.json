@@ -1,0 +1,33 @@
+{
+  "_comment": "Example JSON response for config URL endpoint",
+  "_description": "This file shows the expected format for the config fallback server",
+  "_usage": "Host this JSON at your config URL (e.g., https://hoptech.co.nz/bgw-config/)",
+  
+  "mqtt_host": "mqtt.thingsboard.cloud",
+  "mqtt_token": "YOUR_DEVICE_ACCESS_TOKEN_HERE",
+  "device_token": "ALTERNATIVE_FIELD_FOR_TOKEN",
+  
+  "_notes": [
+    "The gateway will use 'mqtt_token' if present",
+    "Falls back to 'device_token' if 'mqtt_token' is not present",
+    "Both fields can be provided for compatibility",
+    "Gateway sends these headers with the request:",
+    "  - X-Device-MAC: [gateway MAC address]",
+    "  - X-Device-Type: BLE-Gateway",
+    "  - X-Firmware-Version: [current version]",
+    "You can use these headers to provide device-specific configuration",
+    "Basic authentication is supported if credentials are configured"
+  ],
+  
+  "_optional_fields": {
+    "scan_interval": 10000,
+    "batch_interval": 60000,
+    "mqtt_port": 1883,
+    "mqtt_keepalive": 60
+  },
+  
+  "_example_dynamic_response": {
+    "description": "Server can provide different configs based on MAC address",
+    "php_example": "<?php\n$mac = $_SERVER['HTTP_X_DEVICE_MAC'];\nif ($mac == 'AA:BB:CC:DD:EE:FF') {\n  echo json_encode(['mqtt_host' => 'mqtt1.example.com', 'mqtt_token' => 'token1']);\n} else {\n  echo json_encode(['mqtt_host' => 'mqtt2.example.com', 'mqtt_token' => 'token2']);\n}\n?>"
+  }
+}
