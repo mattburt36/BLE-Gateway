@@ -60,7 +60,6 @@ unsigned long lastBatchSend = 0;
 const unsigned long BATCH_INTERVAL = 60000;
 
 unsigned long mqttFailStart = 0;
-const unsigned long MQTT_FAIL_AP_TIMEOUT = 300000;
 bool apModeOffered = false;
 
 WiFiClient espClient;
@@ -220,5 +219,4 @@ void loop() {
 
     // Main loop just yields to tasks
     delay(100);
-}
 }
