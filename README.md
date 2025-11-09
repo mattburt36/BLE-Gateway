@@ -33,7 +33,20 @@ ESP32-based BLE to MQTT gateway for MOKO temperature/humidity sensors with multi
 
 ## Quick Start
 
-### Installation
+### Installation with PlatformIO (Recommended)
+
+1. **Install Visual Studio Code** with the PlatformIO extension
+2. **Open the project:**
+   ```bash
+   cd BLE-Gateway
+   code .
+   ```
+3. **Build and upload:**
+   - Click the PlatformIO icon in the sidebar
+   - Click "Upload" or press Ctrl+Alt+U
+   - Dependencies are installed automatically
+
+### Installation with Arduino IDE (Alternative)
 
 1. **Install Arduino IDE** with ESP32 board support
 2. **Install required libraries** via Library Manager:
@@ -44,7 +57,7 @@ ESP32-based BLE to MQTT gateway for MOKO temperature/humidity sensors with multi
 
 3. **Open project:**
    ```
-   File → Open → BLE-WiFi-Gateway.ino
+   File → Open → src/main.cpp
    ```
 
 4. **Configure board:**
@@ -76,12 +89,13 @@ The gateway uses a modular, multi-threaded architecture for reliability:
 ### Code Structure
 
 The project is organized into focused modules:
-- `BLE-WiFi-Gateway.ino` - Main application (setup, loop, globals)
-- `config_manager.h` - Configuration storage and encryption
-- `wifi_manager.h` - WiFi and configuration portal
-- `ble_scanner.h` - BLE scanning and sensor parsing
-- `ota_manager.h` - Firmware update handling
-- `mqtt_handler.h` - MQTT/ThingsBoard integration
+- `src/main.cpp` - Main application (setup, loop, globals)
+- `src/config_manager.h` - Configuration storage and encryption
+- `src/wifi_manager.h` - WiFi and configuration portal
+- `src/ble_scanner.h` - BLE scanning and sensor parsing
+- `src/ota_manager.h` - Firmware update handling
+- `src/mqtt_handler.h` - MQTT/ThingsBoard integration
+- `platformio.ini` - PlatformIO project configuration
 
 ### Multi-Threaded Operation
 
@@ -224,9 +238,16 @@ The gateway reports firmware status via device attributes:
 
 ### Creating Firmware Binary
 
-In Arduino IDE:
+**With PlatformIO:**
+```bash
+pio run -t buildfs  # Build filesystem
+pio run             # Build firmware
+```
+Binary will be in `.pio/build/esp32dev/firmware.bin`
+
+**With Arduino IDE:**
 1. Sketch → Export compiled Binary
-2. Binary will be saved as `BLE-WiFi-Gateway.ino.esp32.bin`
+2. Binary will be saved as `main.ino.esp32.bin`
 3. Upload to your web server for OTA updates
 
 ## ThingsBoard Integration
