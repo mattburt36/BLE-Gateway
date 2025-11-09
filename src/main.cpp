@@ -29,13 +29,17 @@
 #define FIRMWARE_VERSION "2.0.0"
 #define FIRMWARE_TITLE "BLE-Gateway-XIAO"
 
+// Forward declarations
+void startTasks();
+void stopTasks();
+
 // Include modular components
 #include "config_manager.h"
 #include "wifi_manager.h"
-#include "ble_scanner.h"
+#include "ota_manager.h"
 #include "mqtt_handler.h"
 #include "device_tracker.h"
-#include "ota_manager.h"
+#include "ble_scanner.h"
 
 // Global configuration
 String wifi_ssid = "";

@@ -25,7 +25,7 @@ extern bool mqtt_connected;
 extern SemaphoreHandle_t mqttMutex;
 
 const int MQTT_PORT = 8883;  // MQTTS port
-const int MQTT_KEEPALIVE = 60;
+const int MQTT_KEEPALIVE_SEC = 60;
 
 bool connectMQTT() {
     Serial.printf("Connecting to MQTTS: %s:%d\n", mqtt_host.c_str(), MQTT_PORT);
@@ -34,9 +34,9 @@ bool connectMQTT() {
     espClient.setInsecure();  // Accept any certificate (or load CA cert for verification)
     
     mqttClient.setServer(mqtt_host.c_str(), MQTT_PORT);
-    mqttClient.setKeepAlive(MQTT_KEEPALIVE);
+    mqttClient.setKeepAlive(MQTT_KEEPALIVE_SEC);
     mqttClient.setBufferSize(4096);
-    mqttClient.setCallback(mqttCallback);  // Set callback for incoming messages
+    mqttClient.setCallback(mqttCallback);
     
     String clientId = "BLE-Gateway-" + device_id;
     

@@ -3,7 +3,7 @@
   "_description": "This file shows the expected format for the config fallback server",
   "_usage": "Host this JSON at your config URL (e.g., https://hoptech.co.nz/bgw-config/)",
   
-  "mqtt_host": "mqtt.thingsboard.cloud",
+  "mqtt_host": "mqtt.hoptech.co.nz",
   "mqtt_token": "YOUR_DEVICE_ACCESS_TOKEN_HERE",
   "device_token": "ALTERNATIVE_FIELD_FOR_TOKEN",
   

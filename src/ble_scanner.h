@@ -28,8 +28,7 @@ bool parseMOKOL02S(BLEAdvertisedDevice advertisedDevice, float& temperature, flo
         return false;
     }
     
-    BLEUUID serviceUUID = BLEUUID("0000EA01-0000-1000-8000-00805F9B34FB");
-    std::string serviceData = advertisedDevice.getServiceData(serviceUUID);
+    std::string serviceData = advertisedDevice.getServiceData();
     
     if (serviceData.length() < 6) {
         return false;
@@ -57,8 +56,7 @@ bool parseMOKOTH(BLEAdvertisedDevice advertisedDevice, float& temperature, float
         return false;
     }
     
-    BLEUUID serviceUUID = BLEUUID((uint16_t)0xABFE);
-    std::string serviceData = advertisedDevice.getServiceData(serviceUUID);
+    std::string serviceData = advertisedDevice.getServiceData();
     
     if (serviceData.length() < 13) {
         return false;

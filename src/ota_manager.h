@@ -235,10 +235,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                 delay(1000);
                 ESP.restart();
             }
-            else if (cmd == "status") {
-                Serial.println("Status command received");
-                publishGatewayStatus();
-            }
         }
     }
 }

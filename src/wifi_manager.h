@@ -121,27 +121,27 @@ bool fetchRemoteConfig() {
         
         if (!error) {
             // Extract configuration
-            if (doc.containsKey("development")) {
+            if (!doc["development"].isNull()) {
                 development = doc["development"].as<String>();
             }
-            if (doc.containsKey("firmware")) {
+            if (!doc["firmware"].isNull()) {
                 firmware_url = doc["firmware"].as<String>();
             }
-            if (doc.containsKey("company")) {
+            if (!doc["company"].isNull()) {
                 company = doc["company"].as<String>();
             }
-            if (doc.containsKey("mqtt_host")) {
+            if (!doc["mqtt_host"].isNull()) {
                 mqtt_host = doc["mqtt_host"].as<String>();
             }
-            if (doc.containsKey("mqtt_user")) {
+            if (!doc["mqtt_user"].isNull()) {
                 mqtt_user = doc["mqtt_user"].as<String>();
             }
-            if (doc.containsKey("mqtt_password")) {
+            if (!doc["mqtt_password"].isNull()) {
                 mqtt_password = doc["mqtt_password"].as<String>();
             }
             
             // Use timestamp from config if NTP failed
-            if (!time_synced && doc.containsKey("timestamp")) {
+            if (!time_synced && !doc["timestamp"].isNull()) {
                 current_timestamp = doc["timestamp"].as<unsigned long>();
                 time_synced = true;
                 Serial.println("✓ Time synchronized from config server");
@@ -166,44 +166,31 @@ bool fetchRemoteConfig() {
 }
 
 void handleConfigRoot() {
-    String html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>BLE Gateway Configuration</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: Arial; margin: 20px; background: #f0f0f0; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; }
-        input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; }
-        button { background: #4CAF50; color: white; padding: 12px; border: none; width: 100%; cursor: pointer; font-size: 16px; }
-        button:hover { background: #45a049; }
-        .info { background: #e7f3fe; padding: 10px; border-left: 4px solid #2196F3; margin-bottom: 15px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔧 BLE Gateway Setup</h1>
-        <div class="info">
-            <strong>Device ID:</strong> )" + device_id + R"(
-        </div>
-        <form action="/save" method="POST">
-            <h3>WiFi Settings</h3>
-            <input type="text" name="ssid" placeholder="WiFi SSID" required>
-            <input type="password" name="password" placeholder="WiFi Password" required>
-            
-            <h3>MQTT Settings</h3>
-            <input type="text" name="mqtt_host" placeholder="MQTT Host" value="mqtt.hoptech.co.nz">
-            <input type="text" name="mqtt_user" placeholder="MQTT Username (optional)">
-            <input type="password" name="mqtt_pass" placeholder="MQTT Password (optional)">
-            
-            <button type="submit">Save & Restart</button>
-        </form>
-    </div>
-</body>
-</html>
-)";
+    String html = "<!DOCTYPE html><html><head>";
+    html += "<title>BLE Gateway Configuration</title>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>";
+    html += "body { font-family: Arial; margin: 20px; background: #f0f0f0; }";
+    html += ".container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
+    html += "h1 { color: #333; }";
+    html += "input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; }";
+    html += "button { background: #4CAF50; color: white; padding: 12px; border: none; width: 100%; cursor: pointer; font-size: 16px; }";
+    html += "button:hover { background: #45a049; }";
+    html += ".info { background: #e7f3fe; padding: 10px; border-left: 4px solid #2196F3; margin-bottom: 15px; }";
+    html += "</style></head><body>";
+    html += "<div class='container'>";
+    html += "<h1>BLE Gateway Setup</h1>";
+    html += "<div class='info'><strong>Device ID:</strong> " + device_id + "</div>";
+    html += "<form action='/save' method='POST'>";
+    html += "<h3>WiFi Settings</h3>";
+    html += "<input type='text' name='ssid' placeholder='WiFi SSID' required>";
+    html += "<input type='password' name='password' placeholder='WiFi Password' required>";
+    html += "<h3>MQTT Settings</h3>";
+    html += "<input type='text' name='mqtt_host' placeholder='MQTT Host' value='mqtt.hoptech.co.nz'>";
+    html += "<input type='text' name='mqtt_user' placeholder='MQTT Username (optional)'>";
+    html += "<input type='password' name='mqtt_pass' placeholder='MQTT Password (optional)'>";
+    html += "<button type='submit'>Save & Restart</button>";
+    html += "</form></div></body></html>";
     
     webServer.send(200, "text/html", html);
 }
@@ -217,25 +204,15 @@ void handleConfigSave() {
     
     saveConfig();
     
-    String html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Configuration Saved</title>
-    <meta http-equiv="refresh" content="3;url=/">
-    <style>
-        body { font-family: Arial; margin: 20px; text-align: center; }
-        .success { color: #4CAF50; font-size: 24px; margin: 50px; }
-    </style>
-</head>
-<body>
-    <div class="success">
-        ✓ Configuration saved!<br>
-        Restarting device...
-    </div>
-</body>
-</html>
-)";
+    String html = "<!DOCTYPE html><html><head>";
+    html += "<title>Configuration Saved</title>";
+    html += "<meta http-equiv='refresh' content='3;url=/'>";
+    html += "<style>";
+    html += "body { font-family: Arial; margin: 20px; text-align: center; }";
+    html += ".success { color: #4CAF50; font-size: 24px; margin: 50px; }";
+    html += "</style></head><body>";
+    html += "<div class='success'>Configuration saved!<br>Restarting device...</div>";
+    html += "</body></html>";
     
     webServer.send(200, "text/html", html);
     
