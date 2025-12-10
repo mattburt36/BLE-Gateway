@@ -1,6 +1,6 @@
-# BLE Gateway for ThingsBoard
+# BLE Gateway for ThingsBoard - SenseCAP Indicator Edition
 
-ESP32-based BLE to MQTT gateway that discovers all BLE devices and parses temperature/humidity data from LOP001 sensors. Features multi-threaded operation, intelligent change detection, and seamless ThingsBoard integration.
+ESP32-S3 based BLE to MQTT gateway with 4" touch display for the Seeed Studio SenseCAP Indicator D1. Discovers all BLE devices, parses temperature/humidity data from LOP001 sensors, and displays real-time data on the integrated screen. Features multi-threaded operation, intelligent change detection, and seamless ThingsBoard integration.
 
 ## Features
 
@@ -17,7 +17,13 @@ ESP32-based BLE to MQTT gateway that discovers all BLE devices and parses temper
 
 ## Hardware Requirements
 
-- **ESP32 Development Board** (tested on XIAO ESP32-S3)
+- **Seeed Studio SenseCAP Indicator D1**
+  - ESP32-S3 (240MHz dual-core, 8MB Flash, 8MB PSRAM)
+  - RP2040 (133MHz dual ARM Cortex-M0+, 2MB Flash)
+  - 4" capacitive touch screen (480x480)
+  - Wi-Fi 2.4GHz, Bluetooth 5.0 LE
+  - Optional LoRa connectivity
+  - Grove expansion ports
 - **LOP001 BLE Sensors** - optional, gateway reports all BLE devices
 
 ## Supported Sensors
