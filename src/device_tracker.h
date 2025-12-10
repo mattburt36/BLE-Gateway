@@ -190,14 +190,12 @@ void publishPendingDevices() {
                 }
                 // Don't include null values for non-sensor devices
                 
-                // Publish to MQTT
-                if (publishDeviceData(device.macAddress, doc, device.isSensor)) {
-                    device.lastPublish = millis();
-                    device.needsPublish = false;
-                    device.hasChanged = false;
-                    
-                    Serial.printf("Published device: %s\n", device.macAddress.c_str());
-                }
+                // MQTT publishing disabled for now - just mark as published
+                device.lastPublish = millis();
+                device.needsPublish = false;
+                device.hasChanged = false;
+                
+                Serial.printf("Device tracked: %s\n", device.macAddress.c_str());
             }
         }
         

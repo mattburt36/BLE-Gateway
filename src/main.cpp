@@ -173,28 +173,6 @@ void startTasks() {
         NULL,
         1,
         &bleTaskHandle,
-        1
-    );
-    
-    // Task 2: MQTT Maintenance (Core 0, Priority 2)
-    xTaskCreatePinnedToCore(
-        mqttMaintenanceTask,
-        "MQTT_Task",
-        8192,
-        NULL,
-        2,
-        &mqttTaskHandle,
-        0
-    );
-    
-    // Task 3: WiFi Monitoring (Core 0, Priority 1)
-    xTaskCreatePinnedToCore(
-        wifiMonitorTask,
-        "WiFi_Task",
-        4096,
-        NULL,
-        1,
-        &wifiTaskHandle,
         0
     );
     

@@ -220,7 +220,6 @@ bool init_rgb_panel() {
             },
         },
         .data_width = 16,
-        .bits_per_pixel = 16,
         .num_fbs = 2,
         .bounce_buffer_size_px = 0,
         .sram_trans_align = 0,
@@ -309,7 +308,7 @@ void create_main_screen() {
     lv_obj_t *title = lv_label_create(main_screen);
     lv_label_set_text(title, "BLE Temperature Monitor");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
     
     // Time display
@@ -371,6 +370,9 @@ static void keyboard_event_handler(lv_event_t *e) {
     }
 }
 
+// Forward declaration
+void show_main_screen();
+
 // Event handler for Connect button
 static void connect_btn_event_handler(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
@@ -413,9 +415,7 @@ static void connect_btn_event_handler(lv_event_t *e) {
             show_main_screen();
             
             // Start BLE scanning if not already started
-            extern TaskHandle_t bleTaskHandle;
             if (bleTaskHandle == NULL) {
-                extern void startTasks();
                 startTasks();
             }
         } else {
@@ -435,7 +435,7 @@ void create_wifi_config_screen() {
     lv_obj_t *title = lv_label_create(wifi_config_screen);
     lv_label_set_text(title, "WiFi Configuration");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
     
     // SSID Label
@@ -513,7 +513,7 @@ void update_temperature_display() {
                 String label_text = device.name.isEmpty() ? device.mac : device.name;
                 lv_label_set_text(name_label, label_text.c_str());
                 lv_obj_set_style_text_color(name_label, lv_color_hex(0xFFFFFF), 0);
-                lv_obj_set_style_text_font(name_label, &lv_font_montserrat_16, 0);
+                lv_obj_set_style_text_font(name_label, &lv_font_montserrat_14, 0);
                 lv_obj_align(name_label, LV_ALIGN_TOP_LEFT, 10, 5);
                 
                 // Temperature and Humidity
@@ -524,7 +524,7 @@ void update_temperature_display() {
                     lv_obj_t *temp_label = lv_label_create(card);
                     lv_label_set_text(temp_label, temp_str);
                     lv_obj_set_style_text_color(temp_label, lv_color_hex(0x00FF00), 0);
-                    lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_18, 0);
+                    lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_14, 0);
                     lv_obj_align(temp_label, LV_ALIGN_BOTTOM_LEFT, 10, -5);
                 }
                 

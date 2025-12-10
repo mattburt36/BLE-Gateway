@@ -50,22 +50,8 @@ bool loadConfig() {
 void saveConfig() {
     preferences.putString("wifi_ssid", wifi_ssid);
     preferences.putString("wifi_pass", wifi_password);
-    preferences.putString("mqtt_user", mqtt_user);
-    preferences.putString("mqtt_pass", mqtt_password);
-    preferences.putString("device_token", device_token);
     
     Serial.println("✓ Configuration saved to flash");
-}
-
-// Provision device with MQTT credentials and device token
-void provisionMQTT(const String& user, const String& pass, const String& token) {
-    mqtt_user = user;
-    mqtt_password = pass;
-    device_token = token;
-    preferences.putString("mqtt_user", mqtt_user);
-    preferences.putString("mqtt_pass", mqtt_password);
-    preferences.putString("device_token", device_token);
-    Serial.println("✓ MQTT credentials and device token provisioned to flash");
 }
 
 void clearConfig() {
