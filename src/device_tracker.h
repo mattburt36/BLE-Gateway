@@ -23,6 +23,7 @@ struct TrackedDevice {
     String macAddress;
     String name;
     String sensorType;
+    bool isSensor;  // True if sensor beacon with parsed temp/humidity
     
     // Current values
     float temperature;
@@ -48,8 +49,8 @@ struct TrackedDevice {
 std::map<String, TrackedDevice> deviceMap;
 
 const unsigned long SIX_HOURS = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
-const float TEMP_THRESHOLD = 0.5; // °C - minimum change to consider significant
-const float HUM_THRESHOLD = 2.0;  // % - minimum change to consider significant
+const float TEMP_THRESHOLD = 0.1; // °C - minimum change to consider significant (reduced for testing)
+const float HUM_THRESHOLD = 0.5;  // % - minimum change to consider significant (reduced for testing)
 const int BATTERY_THRESHOLD = 5;  // % or mV - minimum change to consider significant
 
 bool hasSignificantChange(const TrackedDevice& device, float newTemp, float newHum, int newBatt) {
@@ -61,7 +62,7 @@ bool hasSignificantChange(const TrackedDevice& device, float newTemp, float newH
 }
 
 void updateDevice(const String& mac, const String& name, const String& type, 
-                  float temp, float hum, int batt, int rssi) {
+                  float temp, float hum, int batt, int rssi, bool isSensor = false) {
     
     if (xSemaphoreTake(deviceMapMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         unsigned long now = millis();
@@ -75,6 +76,7 @@ void updateDevice(const String& mac, const String& name, const String& type,
             newDevice.macAddress = mac;
             newDevice.name = name;
             newDevice.sensorType = type;
+            newDevice.isSensor = isSensor;
             newDevice.temperature = temp;
             newDevice.humidity = hum;
             newDevice.battery = batt;
@@ -91,20 +93,24 @@ void updateDevice(const String& mac, const String& name, const String& type,
             deviceMap[mac] = newDevice;
             
             Serial.printf("New device discovered: %s (%s)\n", mac.c_str(), name.c_str());
-            Serial.printf("  Type: %s, Temp: %.1f°C, Humidity: %.1f%%, Battery: %d, RSSI: %d\n",
-                         type.c_str(), temp, hum, batt, rssi);
+            if (isSensor) {
+                Serial.printf("  Type: %s, Temp: %.2f°C, Humidity: %.2f%%, Battery: %d, RSSI: %d\n",
+                             type.c_str(), temp, hum, batt, rssi);
+            } else {
+                Serial.printf("  Type: %s, RSSI: %d\n", type.c_str(), rssi);
+            }
         } else {
             // Existing device - update data
             TrackedDevice& device = it->second;
             device.lastUpdate = now;
             device.rssi = rssi; // Always update RSSI
             
-            // Check for significant changes
-            if (hasSignificantChange(device, temp, hum, batt)) {
+            // Only check for changes if it's a sensor device with sensor data
+            if (isSensor && hasSignificantChange(device, temp, hum, batt)) {
                 Serial.printf("Device changed: %s (%s)\n", mac.c_str(), name.c_str());
-                Serial.printf("  Old: Temp=%.1f°C, Hum=%.1f%%, Batt=%d\n", 
+                Serial.printf("  Old: Temp=%.2f°C, Hum=%.2f%%, Batt=%d\n", 
                              device.temperature, device.humidity, device.battery);
-                Serial.printf("  New: Temp=%.1f°C, Hum=%.1f%%, Batt=%d\n", 
+                Serial.printf("  New: Temp=%.2f°C, Hum=%.2f%%, Batt=%d\n", 
                              temp, hum, batt);
                 
                 // Update stored values
@@ -164,15 +170,28 @@ void publishPendingDevices() {
                 doc["mac"] = device.macAddress;
                 doc["name"] = device.name;
                 doc["type"] = device.sensorType;
-                doc["temperature"] = device.temperature;
-                doc["humidity"] = device.humidity;
-                doc["battery"] = device.battery;
                 doc["rssi"] = device.rssi;
-                doc["timestamp"] = current_timestamp + (millis() / 1000);
+                
+                // Calculate timestamp - use current synced time IN MILLISECONDS for ThingsBoard
+                // current_timestamp is already the current time from NTP, no need to add uptime
+                // Must use unsigned long long (64-bit) to avoid overflow
+                unsigned long long ts_millis = (unsigned long long)current_timestamp * 1000ULL;
+                doc["timestamp"] = ts_millis;
                 doc["changed"] = device.hasChanged;
                 
+                // Only include sensor data for sensor devices
+                if (device.isSensor) {
+                    doc["temperature"] = device.temperature;
+                    doc["humidity"] = device.humidity;
+                    // Only include battery if it's non-zero (LOP001 has no battery)
+                    if (device.battery > 0) {
+                        doc["battery"] = device.battery;
+                    }
+                }
+                // Don't include null values for non-sensor devices
+                
                 // Publish to MQTT
-                if (publishDeviceData(device.macAddress, doc)) {
+                if (publishDeviceData(device.macAddress, doc, device.isSensor)) {
                     device.lastPublish = millis();
                     device.needsPublish = false;
                     device.hasChanged = false;
@@ -204,7 +223,22 @@ void deviceTrackerTask(void* parameter) {
         
         // Update timestamp (if time is synced)
         if (time_synced) {
+            unsigned long old_ts = current_timestamp;
             current_timestamp = time(nullptr);
+            
+            // Debug output every minute to verify time sync is working
+            static unsigned long last_debug = 0;
+            if (millis() - last_debug > 60000) {
+                Serial.printf("🕐 Time sync: current_timestamp=%lu (was %lu)\n", current_timestamp, old_ts);
+                last_debug = millis();
+            }
+        } else {
+            // Warning if time is not synced
+            static unsigned long last_warning = 0;
+            if (millis() - last_warning > 60000) {
+                Serial.println("⚠️  WARNING: Time not synced! Timestamps will be incorrect.");
+                last_warning = millis();
+            }
         }
         
         vTaskDelay(pdMS_TO_TICKS(5000)); // Run every 5 seconds

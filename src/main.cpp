@@ -29,6 +29,9 @@
 #define FIRMWARE_VERSION "2.0.0"
 #define FIRMWARE_TITLE "BLE-Gateway-XIAO"
 
+// LED Pin (built-in LED on most ESP32-S3 boards)
+#define LED_PIN 21  // Adjust if needed for your board
+
 // Forward declarations
 void startTasks();
 void stopTasks();
@@ -40,14 +43,16 @@ void stopTasks();
 #include "mqtt_handler.h"
 #include "device_tracker.h"
 #include "ble_scanner.h"
+#include "provisioning.h"
 
 // Global configuration
 String wifi_ssid = "";
 String wifi_password = "";
-String mqtt_host = "mqtt.hoptech.co.nz";
+String mqtt_host = "mqtt.hoptech.co.nz";  // RabbitMQ MQTT broker
 String mqtt_user = "";
 String mqtt_password = "";
 String device_id = "";
+String device_token = "";  // Device authentication token for config server
 bool wifi_connected = false;
 bool mqtt_connected = false;
 bool config_mode = false;
@@ -70,19 +75,29 @@ SemaphoreHandle_t deviceMapMutex = NULL;
 SemaphoreHandle_t mqttMutex = NULL;
 
 // WiFi clients
-WiFiClientSecure espClient;
-PubSubClient mqttClient(espClient);
+WiFiClient mqttPlainClient;  // Use plain client for testing port 1883
+PubSubClient mqttClient(mqttPlainClient);
 WebServer webServer(80);
 DNSServer dnsServer;
 
 void setup() {
-    Serial.begin(115200);
-    delay(1000);
+    // Setup LED for status indication
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
     
-    Serial.println("\n\n========================================");
+    // Blink 3 times to show device is starting
+    for(int i = 0; i < 3; i++) {
+        digitalWrite(LED_PIN, HIGH);
+        delay(200);
+        digitalWrite(LED_PIN, LOW);
+        delay(200);
+    }
+    
+    Serial.begin(115200);
+    Serial.println("========================================");
     Serial.printf("%s v%s\n", FIRMWARE_TITLE, FIRMWARE_VERSION);
     Serial.println("XIAO ESP32-S3 BLE Gateway");
-    Serial.println("========================================\n");
+    Serial.println("========================================");
     
     // Generate device ID from MAC address
     uint8_t mac[6];
@@ -103,44 +118,52 @@ void setup() {
     if (!hasConfig) {
         Serial.println("No configuration found in flash.");
         Serial.println("Starting WiFi Access Point for configuration...\n");
+        // LED: Slow blink = AP mode
+        digitalWrite(LED_PIN, HIGH);
         startConfigPortal();
         config_mode = true;
     } else {
         Serial.println("Configuration loaded from flash.");
         Serial.printf("WiFi SSID: %s\n", wifi_ssid.c_str());
-        Serial.printf("MQTT Host: %s\n\n", mqtt_host.c_str());
+        Serial.printf("MQTT Host: %s\n", mqtt_host.c_str());
+        Serial.printf("MQTT User: %s\n\n", mqtt_user.c_str());
         
         // Try to connect to WiFi
         if (connectWiFi()) {
             wifi_connected = true;
+            // LED: 2 quick blinks = WiFi connected
+            for(int i = 0; i < 2; i++) {
+                digitalWrite(LED_PIN, HIGH);
+                delay(100);
+                digitalWrite(LED_PIN, LOW);
+                delay(100);
+            }
             
             // Sync time with NTP
             if (syncTimeNTP()) {
                 time_synced = true;
                 Serial.println("Time synchronized via NTP");
             } else {
-                Serial.println("NTP sync failed, will try config server for time");
+                Serial.println("NTP sync failed, continuing without time sync");
             }
             
-            // Fetch remote configuration
-            if (fetchRemoteConfig()) {
-                Serial.println("Remote configuration retrieved successfully");
-            }
-            
-            // Connect to MQTT
+            // Try to connect to MQTT
             if (connectMQTT()) {
                 mqtt_connected = true;
                 Serial.println("MQTT connected successfully\n");
+                // LED: Solid ON = MQTT connected and operational
+                digitalWrite(LED_PIN, HIGH);
                 
                 // Start multi-threaded operation
                 startTasks();
             } else {
-                Serial.println("MQTT connection failed, entering config mode");
-                startConfigPortal();
-                config_mode = true;
+                Serial.println("MQTT connection failed, will retry in loop");
+                // Don't start config portal - WiFi is working, just keep retrying MQTT
             }
         } else {
-            Serial.println("WiFi connection failed, entering config mode");
+            // WiFi connection failed - go back to AP mode to fix credentials
+            Serial.println("WiFi connection failed!");
+            Serial.println("Starting AP mode - please check credentials\n");
             startConfigPortal();
             config_mode = true;
         }
@@ -150,27 +173,64 @@ void setup() {
 }
 
 void loop() {
+    // Handle serial provisioning commands
+    handleSerialProvisioning();
+    
     if (config_mode) {
         // Handle web server and DNS for config portal
         webServer.handleClient();
         dnsServer.processNextRequest();
         delay(10);
     } else {
-        // Main loop does minimal work - tasks handle everything
-        delay(1000);
+        // Main loop - retry connections if needed
+        static unsigned long last_retry = 0;
+        unsigned long now = millis();
         
-        // Check for critical failures
+        // Check WiFi connection
         if (!wifi_connected || WiFi.status() != WL_CONNECTED) {
-            Serial.println("WiFi connection lost!");
-            stopTasks();
-            startConfigPortal();
-            config_mode = true;
+            if (now - last_retry > 30000) {  // Retry every 30 seconds
+                Serial.println("WiFi disconnected, attempting reconnect...");
+                if (connectWiFi()) {
+                    wifi_connected = true;
+                    Serial.println("WiFi reconnected!");
+                    last_retry = now;
+                } else {
+                    Serial.println("WiFi reconnect failed, will retry");
+                    last_retry = now;
+                }
+            }
         }
+        
+        // Check MQTT connection
+        if (wifi_connected && !mqtt_connected) {
+            if (now - last_retry > 10000) {  // Retry every 10 seconds
+                Serial.println("\n🔄 ========== MQTT RETRY ATTEMPT ==========");
+                Serial.printf("⏱  Uptime: %lu seconds\n", millis() / 1000);
+                Serial.printf("   MQTT User: %s\n", mqtt_user.c_str());
+                Serial.printf("   MQTT Password: %s\n", mqtt_password.length() > 0 ? "***SET***" : "MISSING");
+                
+                // Try MQTT connection
+                if (connectMQTT()) {
+                    mqtt_connected = true;
+                    Serial.println("✅ MQTT connected - starting tasks...");
+                    startTasks();
+                } else {
+                    Serial.println("❌ MQTT connection failed - will retry in 10 seconds");
+                }
+                Serial.println("==========================================\n");
+                last_retry = now;
+            }
+        }
+        
+        delay(1000);
     }
 }
 
 void startTasks() {
     Serial.println("Creating FreeRTOS tasks...");
+    
+    // Initialize BLE scanner
+    initBLEScanner();
     
     // Create mutexes
     deviceMapMutex = xSemaphoreCreateMutex();

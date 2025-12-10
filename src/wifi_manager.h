@@ -16,6 +16,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
 #include <ArduinoJson.h>
 
@@ -25,6 +26,7 @@ extern String mqtt_host;
 extern String mqtt_user;
 extern String mqtt_password;
 extern String device_id;
+extern String device_token;
 extern String company;
 extern String development;
 extern String firmware_url;
@@ -40,20 +42,25 @@ const IPAddress AP_IP(192, 168, 4, 1);
 const IPAddress AP_GATEWAY(192, 168, 4, 1);
 const IPAddress AP_SUBNET(255, 255, 255, 0);
 
-// NTP configuration
-const char* NTP_SERVER = "pool.ntp.org";
-const long GMT_OFFSET = 0;
-const int DAYLIGHT_OFFSET = 0;
-
-// Remote config URL
-const char* CONFIG_SERVER = "http://gwconfig.hoptech.co.nz";
+// NTP configuration - Use Cloudflare NTP with local fallback
+const char* NTP_SERVER = "time.cloudflare.com";  // Cloudflare NTP (anycast, fast, secure)
+const char* NTP_SERVER_BACKUP = "mqtt.hoptech.co.nz"; // Local fallback
+// Timezone configuration
+// Note: ESP32 configTime uses seconds offset, not POSIX TZ string for reliability
+// Pacific/Auckland: UTC+13 during NZDT (Sept-April), UTC+12 during NZST (April-Sept)
+const long GMT_OFFSET_SEC = 13 * 3600;  // Current: NZDT (UTC+13) - manually adjust in April
+const int DAYLIGHT_OFFSET_SEC = 0;
 
 bool connectWiFi() {
-    Serial.printf("Connecting to WiFi: %s\n", wifi_ssid.c_str());
+    Serial.println("\n========== WiFi CONNECTION ATTEMPT ==========");
+    Serial.printf("📡 SSID: %s\n", wifi_ssid.c_str());
+    Serial.printf("🔑 Password: %s\n", wifi_password.length() > 0 ? "***SET***" : "(none)");
+    Serial.printf("📶 Current Status: %d\n", WiFi.status());
     
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
     
+    Serial.print("⏳ Connecting");
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 20) {
         delay(500);
@@ -63,20 +70,49 @@ bool connectWiFi() {
     Serial.println();
     
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("✓ WiFi connected");
-        Serial.printf("  IP Address: %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("  RSSI: %d dBm\n", WiFi.RSSI());
+        Serial.println("✅ ✅ ✅ WiFi CONNECTED! ✅ ✅ ✅");
+        Serial.printf("   IP Address: %s\n", WiFi.localIP().toString().c_str());
+        Serial.printf("   Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
+        Serial.printf("   DNS: %s\n", WiFi.dnsIP().toString().c_str());
+        Serial.printf("   RSSI: %d dBm\n", WiFi.RSSI());
+        Serial.printf("   MAC: %s\n", WiFi.macAddress().c_str());
+        Serial.println("==========================================\n");
         return true;
     } else {
-        Serial.println("✗ WiFi connection failed");
+        Serial.println("❌ ❌ ❌ WiFi CONNECTION FAILED! ❌ ❌ ❌");
+        Serial.printf("   Status Code: %d\n", WiFi.status());
+        Serial.println("\n🔧 TROUBLESHOOTING:");
+        switch(WiFi.status()) {
+            case WL_NO_SSID_AVAIL:
+                Serial.println("   → SSID not found. Check:");
+                Serial.println("      1. SSID is spelled correctly");
+                Serial.println("      2. Router is powered on");
+                Serial.println("      3. Device is in range");
+                break;
+            case WL_CONNECT_FAILED:
+                Serial.println("   → Connection failed. Check:");
+                Serial.println("      1. Password is correct");
+                Serial.println("      2. Security mode (WPA2 recommended)");
+                break;
+            case WL_DISCONNECTED:
+                Serial.println("   → Disconnected/Timeout. Check:");
+                Serial.println("      1. Signal strength");
+                Serial.println("      2. Router accepting new connections");
+                Serial.println("      3. MAC filtering on router");
+                break;
+        }
+        Serial.println("==========================================\n");
         return false;
     }
 }
 
 bool syncTimeNTP() {
     Serial.println("Synchronizing time with NTP server...");
+    Serial.printf("Primary NTP: %s, Backup: %s\n", NTP_SERVER, NTP_SERVER_BACKUP);
+    Serial.printf("Timezone offset: UTC%+ld hours (NZDT)\n", GMT_OFFSET_SEC / 3600);
     
-    configTime(GMT_OFFSET, DAYLIGHT_OFFSET, NTP_SERVER);
+    // Configure NTP with local server and backup
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER, NTP_SERVER_BACKUP);
     
     int attempts = 0;
     struct tm timeinfo;
@@ -88,81 +124,12 @@ bool syncTimeNTP() {
     if (attempts < 10) {
         current_timestamp = time(nullptr);
         Serial.printf("✓ Time synchronized: %s", asctime(&timeinfo));
+        Serial.printf("   Local time server working: %s\n", NTP_SERVER);
         return true;
     } else {
-        Serial.println("✗ NTP sync failed");
+        Serial.println("✗ NTP sync failed from both servers");
         return false;
     }
-}
-
-bool fetchRemoteConfig() {
-    if (!wifi_connected) {
-        Serial.println("Cannot fetch remote config - WiFi not connected");
-        return false;
-    }
-    
-    HTTPClient http;
-    String url = String(CONFIG_SERVER) + "/" + device_id;
-    
-    Serial.printf("Fetching remote configuration from: %s\n", url.c_str());
-    
-    http.begin(url);
-    http.addHeader("X-Device-ID", device_id);
-    http.addHeader("X-Firmware-Version", FIRMWARE_VERSION);
-    
-    int httpCode = http.GET();
-    
-    if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
-        
-        // Parse JSON response
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, payload);
-        
-        if (!error) {
-            // Extract configuration
-            if (!doc["development"].isNull()) {
-                development = doc["development"].as<String>();
-            }
-            if (!doc["firmware"].isNull()) {
-                firmware_url = doc["firmware"].as<String>();
-            }
-            if (!doc["company"].isNull()) {
-                company = doc["company"].as<String>();
-            }
-            if (!doc["mqtt_host"].isNull()) {
-                mqtt_host = doc["mqtt_host"].as<String>();
-            }
-            if (!doc["mqtt_user"].isNull()) {
-                mqtt_user = doc["mqtt_user"].as<String>();
-            }
-            if (!doc["mqtt_password"].isNull()) {
-                mqtt_password = doc["mqtt_password"].as<String>();
-            }
-            
-            // Use timestamp from config if NTP failed
-            if (!time_synced && !doc["timestamp"].isNull()) {
-                current_timestamp = doc["timestamp"].as<unsigned long>();
-                time_synced = true;
-                Serial.println("✓ Time synchronized from config server");
-            }
-            
-            Serial.println("✓ Remote configuration retrieved:");
-            Serial.printf("  Company: %s\n", company.c_str());
-            Serial.printf("  Development: %s\n", development.c_str());
-            Serial.printf("  MQTT Host: %s\n", mqtt_host.c_str());
-            
-            http.end();
-            return true;
-        } else {
-            Serial.printf("✗ JSON parsing failed: %s\n", error.c_str());
-        }
-    } else {
-        Serial.printf("✗ HTTP request failed, code: %d\n", httpCode);
-    }
-    
-    http.end();
-    return false;
 }
 
 void handleConfigRoot() {
@@ -177,19 +144,21 @@ void handleConfigRoot() {
     html += "button { background: #4CAF50; color: white; padding: 12px; border: none; width: 100%; cursor: pointer; font-size: 16px; }";
     html += "button:hover { background: #45a049; }";
     html += ".info { background: #e7f3fe; padding: 10px; border-left: 4px solid #2196F3; margin-bottom: 15px; }";
+    html += ".success { background: #d4edda; padding: 10px; border-left: 4px solid #28a745; margin-bottom: 15px; }";
     html += "</style></head><body>";
     html += "<div class='container'>";
     html += "<h1>BLE Gateway Setup</h1>";
     html += "<div class='info'><strong>Device ID:</strong> " + device_id + "</div>";
+    html += "<div class='success'><strong>✓ ThingsBoard Integration</strong><br>";
+    html += "MQTT Broker: mqtt.hoptech.co.nz<br>";
+    html += "Test credentials: test / hoptech-test</div>";
+    html += "<div class='info'><strong>WiFi Configuration</strong><br>";
+    html += "Configure your WiFi network credentials to connect to the internet.</div>";
     html += "<form action='/save' method='POST'>";
     html += "<h3>WiFi Settings</h3>";
     html += "<input type='text' name='ssid' placeholder='WiFi SSID' required>";
     html += "<input type='password' name='password' placeholder='WiFi Password' required>";
-    html += "<h3>MQTT Settings</h3>";
-    html += "<input type='text' name='mqtt_host' placeholder='MQTT Host' value='mqtt.hoptech.co.nz'>";
-    html += "<input type='text' name='mqtt_user' placeholder='MQTT Username (optional)'>";
-    html += "<input type='password' name='mqtt_pass' placeholder='MQTT Password (optional)'>";
-    html += "<button type='submit'>Save & Restart</button>";
+    html += "<button type='submit'>Save WiFi & Restart</button>";
     html += "</form></div></body></html>";
     
     webServer.send(200, "text/html", html);
@@ -198,9 +167,6 @@ void handleConfigRoot() {
 void handleConfigSave() {
     wifi_ssid = webServer.arg("ssid");
     wifi_password = webServer.arg("password");
-    mqtt_host = webServer.arg("mqtt_host");
-    mqtt_user = webServer.arg("mqtt_user");
-    mqtt_password = webServer.arg("mqtt_pass");
     
     saveConfig();
     
@@ -211,7 +177,7 @@ void handleConfigSave() {
     html += "body { font-family: Arial; margin: 20px; text-align: center; }";
     html += ".success { color: #4CAF50; font-size: 24px; margin: 50px; }";
     html += "</style></head><body>";
-    html += "<div class='success'>Configuration saved!<br>Restarting device...</div>";
+    html += "<div class='success'>WiFi configuration saved!<br>Restarting device...</div>";
     html += "</body></html>";
     
     webServer.send(200, "text/html", html);
