@@ -15,6 +15,17 @@
 #include <lvgl.h>
 #include <Wire.h>
 
+// External declarations - these are defined in main.cpp and other headers
+extern String wifi_ssid;
+extern String wifi_password;
+extern bool wifi_connected;
+extern bool time_synced;
+extern TaskHandle_t bleTaskHandle;
+extern void saveConfig();
+extern bool connectWiFi();
+extern bool syncTimeNTP();
+extern void startTasks();
+
 // Display configuration
 static const uint16_t screenWidth = 480;
 static const uint16_t screenHeight = 480;
@@ -331,6 +342,90 @@ void create_main_screen() {
     lv_obj_set_style_text_align(placeholder, LV_TEXT_ALIGN_CENTER, 0);
 }
 
+// Forward declarations for event handlers
+static void textarea_event_handler(lv_event_t *e);
+static void connect_btn_event_handler(lv_event_t *e);
+static void keyboard_event_handler(lv_event_t *e);
+
+// Event handler for text area focus
+static void textarea_event_handler(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t *ta = lv_event_get_target(e);
+    
+    if (code == LV_EVENT_FOCUSED) {
+        // Show keyboard and link it to this text area
+        if (keyboard != NULL) {
+            lv_keyboard_set_textarea(keyboard, ta);
+            lv_obj_clear_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+// Event handler for keyboard
+static void keyboard_event_handler(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    
+    if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+        // Hide keyboard when user presses OK or Cancel
+        lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Event handler for Connect button
+static void connect_btn_event_handler(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    
+    if (code == LV_EVENT_CLICKED) {
+        Serial.println("Connect button clicked!");
+        
+        // Get text from text areas
+        const char *ssid = lv_textarea_get_text(ssid_textarea);
+        const char *pass = lv_textarea_get_text(pass_textarea);
+        
+        if (strlen(ssid) == 0) {
+            Serial.println("Error: SSID is empty");
+            // TODO: Show error message on screen
+            return;
+        }
+        
+        Serial.printf("Attempting to connect to: %s\n", ssid);
+        
+        // Save credentials to global variables
+        wifi_ssid = String(ssid);
+        wifi_password = String(pass);
+        
+        // Save to flash
+        saveConfig();
+        Serial.println("WiFi credentials saved to flash");
+        
+        // Attempt WiFi connection
+        if (connectWiFi()) {
+            wifi_connected = true;
+            Serial.println("WiFi connected successfully!");
+            
+            // Sync time
+            if (syncTimeNTP()) {
+                time_synced = true;
+                Serial.println("Time synchronized via NTP");
+            }
+            
+            // Show main screen
+            show_main_screen();
+            
+            // Start BLE scanning if not already started
+            extern TaskHandle_t bleTaskHandle;
+            if (bleTaskHandle == NULL) {
+                extern void startTasks();
+                startTasks();
+            }
+        } else {
+            Serial.println("WiFi connection failed!");
+            // TODO: Show error message on screen
+            // For now, stay on config screen so user can try again
+        }
+    }
+}
+
 // Create WiFi configuration screen
 void create_wifi_config_screen() {
     wifi_config_screen = lv_obj_create(NULL);
@@ -355,6 +450,7 @@ void create_wifi_config_screen() {
     lv_obj_align(ssid_textarea, LV_ALIGN_TOP_MID, 0, 95);
     lv_textarea_set_placeholder_text(ssid_textarea, "Enter WiFi SSID");
     lv_textarea_set_one_line(ssid_textarea, true);
+    lv_obj_add_event_cb(ssid_textarea, textarea_event_handler, LV_EVENT_ALL, NULL);
     
     // Password Label
     lv_obj_t *pass_label = lv_label_create(wifi_config_screen);
@@ -369,11 +465,13 @@ void create_wifi_config_screen() {
     lv_textarea_set_placeholder_text(pass_textarea, "Enter WiFi password");
     lv_textarea_set_password_mode(pass_textarea, true);
     lv_textarea_set_one_line(pass_textarea, true);
+    lv_obj_add_event_cb(pass_textarea, textarea_event_handler, LV_EVENT_ALL, NULL);
     
     // Connect Button
     lv_obj_t *connect_btn = lv_btn_create(wifi_config_screen);
     lv_obj_set_size(connect_btn, 200, 50);
     lv_obj_align(connect_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_add_event_cb(connect_btn, connect_btn_event_handler, LV_EVENT_ALL, NULL);
     lv_obj_t *btn_label = lv_label_create(connect_btn);
     lv_label_set_text(btn_label, "Connect");
     lv_obj_center(btn_label);
@@ -383,6 +481,7 @@ void create_wifi_config_screen() {
     lv_obj_set_size(keyboard, LV_HOR_RES, LV_VER_RES / 2);
     lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(keyboard, keyboard_event_handler, LV_EVENT_ALL, NULL);
 }
 
 // Update temperature display with device data
