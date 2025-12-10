@@ -220,9 +220,6 @@ bool init_rgb_panel() {
             },
         },
         .data_width = 16,
-        .num_fbs = 2,
-        .bounce_buffer_size_px = 0,
-        .sram_trans_align = 0,
         .psram_trans_align = 64,
         .hsync_gpio_num = PIN_NUM_HSYNC,
         .vsync_gpio_num = PIN_NUM_VSYNC,
@@ -499,7 +496,7 @@ void update_temperature_display() {
             lv_obj_set_style_text_color(placeholder, lv_color_hex(0x888888), 0);
         } else {
             for (auto& pair : deviceMap) {
-                DeviceData& device = pair.second;
+                auto& device = pair.second;
                 
                 // Create card for each device
                 lv_obj_t *card = lv_obj_create(temp_container);
@@ -510,7 +507,7 @@ void update_temperature_display() {
                 
                 // Device name/MAC
                 lv_obj_t *name_label = lv_label_create(card);
-                String label_text = device.name.isEmpty() ? device.mac : device.name;
+                String label_text = device.name.isEmpty() ? device.macAddress : device.name;
                 lv_label_set_text(name_label, label_text.c_str());
                 lv_obj_set_style_text_color(name_label, lv_color_hex(0xFFFFFF), 0);
                 lv_obj_set_style_text_font(name_label, &lv_font_montserrat_14, 0);

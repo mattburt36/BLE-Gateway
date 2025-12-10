@@ -31,9 +31,9 @@ void stopTasks();
 // Include modular components
 #include "config_manager.h"
 #include "device_tracker.h"
+#include "wifi_manager.h"
 #include "ble_scanner.h"
 #include "display_manager.h"
-#include "wifi_manager.h"
 
 // Global configuration
 String wifi_ssid = "";
