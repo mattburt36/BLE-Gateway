@@ -31,6 +31,7 @@ extern String company;
 extern String development;
 extern String firmware_url;
 extern bool wifi_connected;
+extern bool config_mode;
 extern bool time_synced;
 extern unsigned long current_timestamp;
 extern WebServer webServer;
@@ -206,18 +207,89 @@ void startConfigPortal() {
 
 void wifiMonitorTask(void* parameter) {
     Serial.println("WiFi Monitor Task started");
+    unsigned long lastCheck = 0;
+    int consecutiveFailures = 0;
+    const unsigned long BASE_RETRY_INTERVAL = 10000;  // 10 seconds
+    bool apModeStarted = false;
     
     while (true) {
+        unsigned long now = millis();
+        
         if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("WiFi disconnected, attempting reconnection...");
-            wifi_connected = false;
-            
-            if (connectWiFi()) {
-                wifi_connected = true;
+            // Calculate backoff time based on consecutive failures
+            unsigned long retryInterval = BASE_RETRY_INTERVAL;
+            if (consecutiveFailures >= 10) {
+                retryInterval = 120000;  // 2 minutes after 10 failures
+            } else if (consecutiveFailures >= 5) {
+                retryInterval = 60000;   // 1 minute after 5 failures
+            } else if (consecutiveFailures >= 3) {
+                retryInterval = 30000;   // 30 seconds after 3 failures
             }
+            
+            // Start AP mode after 5 failed attempts to allow credential update
+            if (consecutiveFailures >= 5 && !apModeStarted && !config_mode) {
+                Serial.println("\n⚠️  Multiple WiFi failures detected!");
+                Serial.println("Starting AP mode for reconfiguration while continuing retry...");
+                WiFi.mode(WIFI_AP_STA);  // AP + STA mode
+                WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+                WiFi.softAP(AP_SSID, AP_PASSWORD);
+                dnsServer.start(53, "*", AP_IP);
+                webServer.on("/", handleConfigRoot);
+                webServer.on("/save", HTTP_POST, handleConfigSave);
+                webServer.onNotFound(handleConfigRoot);
+                webServer.begin();
+                config_mode = true;
+                apModeStarted = true;
+                Serial.printf("✓ AP started: %s (password: %s) at %s\n", 
+                             AP_SSID, AP_PASSWORD, AP_IP.toString().c_str());
+            }
+            
+            if (now - lastCheck >= retryInterval) {
+                Serial.printf("WiFi disconnected, attempting reconnection (attempt %d, next retry in %lu sec)...\n", 
+                             consecutiveFailures + 1, retryInterval / 1000);
+                wifi_connected = false;
+                
+                if (connectWiFi()) {
+                    wifi_connected = true;
+                    consecutiveFailures = 0;  // Reset on success
+                    Serial.println("✅ WiFi reconnected successfully!");
+                    
+                    // Stop AP mode if it was started due to failures
+                    if (apModeStarted && config_mode) {
+                        Serial.println("Stopping AP mode (WiFi reconnected)...");
+                        webServer.close();
+                        dnsServer.stop();
+                        WiFi.softAPdisconnect(true);
+                        WiFi.mode(WIFI_STA);  // Back to STA only
+                        config_mode = false;
+                        apModeStarted = false;
+                    }
+                } else {
+                    consecutiveFailures++;
+                }
+                
+                lastCheck = now;
+            }
+        } else {
+            wifi_connected = true;
+            if (consecutiveFailures > 0) {
+                consecutiveFailures = 0;  // Reset when connected
+                
+                // Stop AP mode if it was started due to failures
+                if (apModeStarted && config_mode) {
+                    Serial.println("Stopping AP mode (WiFi connected)...");
+                    webServer.close();
+                    dnsServer.stop();
+                    WiFi.softAPdisconnect(true);
+                    WiFi.mode(WIFI_STA);  // Back to STA only
+                    config_mode = false;
+                    apModeStarted = false;
+                }
+            }
+            lastCheck = now;
         }
         
-        vTaskDelay(pdMS_TO_TICKS(10000)); // Check every 10 seconds
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Check every second
     }
 }
 

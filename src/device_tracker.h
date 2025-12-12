@@ -197,6 +197,13 @@ void publishPendingDevices() {
                     device.hasChanged = false;
                     
                     Serial.printf("Published device: %s\n", device.macAddress.c_str());
+                } else if (device.isSensor) {
+                    // If MQTT publish failed and it's a sensor (LOP001), store offline
+                    storeOfflineDetection(device.macAddress, device.temperature, device.humidity, 
+                                        device.rssi, current_timestamp);
+                    // Still mark as published so we don't keep trying
+                    device.lastPublish = millis();
+                    device.needsPublish = false;
                 }
             }
         }

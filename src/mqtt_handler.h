@@ -170,6 +170,12 @@ bool connectMQTT() {
         // Publish connect message to ThingsBoard
         publishConnectMessage();
         
+        // Publish any offline detections that were stored while disconnected
+        int offlineCount = publishOfflineDetections();
+        if (offlineCount > 0) {
+            Serial.printf("✓ Published %d offline LOP001 detections\n", offlineCount);
+        }
+        
         Serial.println("==========================================\n");
         return true;
     } else {

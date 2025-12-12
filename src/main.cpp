@@ -38,6 +38,7 @@ void stopTasks();
 
 // Include modular components
 #include "config_manager.h"
+#include "offline_storage.h"
 #include "wifi_manager.h"
 #include "ota_manager.h"
 #include "mqtt_handler.h"
@@ -112,6 +113,9 @@ void setup() {
     // Initialize configuration manager
     initConfigManager();
     
+    // Initialize offline storage for LOP001 detections
+    initOfflineStorage();
+    
     // Check if we have stored configuration
     bool hasConfig = loadConfig();
     
@@ -178,32 +182,19 @@ void loop() {
     
     if (config_mode) {
         // Handle web server and DNS for config portal
+        // (AP mode may be active for initial config OR due to WiFi failures)
         webServer.handleClient();
         dnsServer.processNextRequest();
         delay(10);
     } else {
-        // Main loop - retry connections if needed
-        static unsigned long last_retry = 0;
+        // Main loop - WiFi monitoring is now handled by wifiMonitorTask
+        // Just handle MQTT reconnection here
+        static unsigned long last_mqtt_retry = 0;
         unsigned long now = millis();
-        
-        // Check WiFi connection
-        if (!wifi_connected || WiFi.status() != WL_CONNECTED) {
-            if (now - last_retry > 30000) {  // Retry every 30 seconds
-                Serial.println("WiFi disconnected, attempting reconnect...");
-                if (connectWiFi()) {
-                    wifi_connected = true;
-                    Serial.println("WiFi reconnected!");
-                    last_retry = now;
-                } else {
-                    Serial.println("WiFi reconnect failed, will retry");
-                    last_retry = now;
-                }
-            }
-        }
         
         // Check MQTT connection
         if (wifi_connected && !mqtt_connected) {
-            if (now - last_retry > 10000) {  // Retry every 10 seconds
+            if (now - last_mqtt_retry > 10000) {  // Retry every 10 seconds
                 Serial.println("\n🔄 ========== MQTT RETRY ATTEMPT ==========");
                 Serial.printf("⏱  Uptime: %lu seconds\n", millis() / 1000);
                 Serial.printf("   MQTT User: %s\n", mqtt_user.c_str());
@@ -218,7 +209,7 @@ void loop() {
                     Serial.println("❌ MQTT connection failed - will retry in 10 seconds");
                 }
                 Serial.println("==========================================\n");
-                last_retry = now;
+                last_mqtt_retry = now;
             }
         }
         
